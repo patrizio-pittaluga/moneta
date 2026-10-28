@@ -99,3 +99,16 @@
 .balance-toggle svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .balance-toggle.balance-visible .balance-eye-slash{display:none}
 @media(max-width:560px){.balance-display{gap:9px}.balance-toggle{width:40px;height:40px;flex-basis:40px}.balance-display .hero-value{font-size:clamp(30px,8vw,45px)}}
+/* Moneta 2.3 - conti, cassa e carta a saldo */
+.account-summary-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:16px 0 22px}
+.account-summary-card{background:linear-gradient(145deg,#15283a,#10202e);border:1px solid rgba(123,180,183,.20);border-radius:18px;padding:20px;min-width:0;display:flex;flex-direction:column;gap:12px}
+.account-summary-card span{color:#aabcc5;font-size:.82rem;font-weight:650}
+.account-summary-card strong{color:#f1ffff;font-size:clamp(1.15rem,2vw,1.65rem);overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+#view-accounts .service{gap:12px;align-items:center;flex-wrap:wrap}
+#view-accounts .service>span{min-width:0}
+#view-accounts .service>span:last-child{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+#view-accounts .service small{display:block;margin-top:5px;line-height:1.45}
+#view-accounts .btn-small{white-space:normal}
+#view-accounts h3{font-size:.95rem;margin:22px 0 12px}
+@media(max-width:900px){.account-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.account-summary-grid{gap:9px}.account-summary-card{padding:14px;gap:9px}.account-summary-card strong{font-size:1.10rem}#view-accounts .service>span:last-child{justify-content:flex-start}}

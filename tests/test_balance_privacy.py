@@ -14,7 +14,7 @@ class BalancePrivacyTests(unittest.TestCase):
     def test_mask_kept_on_rerender(self):
         js = (P/'app.js').read_text()
         self.assertIn('let balancesVisible=false;',js)
-        self.assertIn("displayBalance('totalBalance',balance(valid))",js)
+        self.assertIn("displayBalance('totalBalance',!activeSpace&&accountsData?accountsData.available:balance(valid))",js)
         self.assertIn("displayBalance('fundBalance',fundData.balance)",js)
         self.assertIn('bindBalancePrivacy()',js)
         self.assertNotIn('localStorage.setItem(\'balanceVisible',js)

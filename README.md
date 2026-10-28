@@ -1,3 +1,9 @@
+# Moneta 2.2.7 — Security Hardening
+
+Per l’aggiornamento corrente consultare **`RELEASE_NOTES_2.2.7.md`**. La documentazione successiva riporta la cronologia delle funzionalità delle versioni precedenti. Nessun dato viene migrato.
+
+---
+
 # Moneta 2.2 — Fondo comune e gestione del capitale (release estesa)
 
 **Data:** 13 ottobre 2026  
@@ -147,3 +153,48 @@ In caso di errore interrompi l'utilizzo condiviso, preserva il backup e raccogli
 - **Cognito e MFA**: il pool esistente resta invariato, inclusa l'obbligatorietà TOTP. I nuovi utenti dovranno completare il primo accesso secondo il flusso Cognito. L'email automatica è opzionale e richiede che Cognito sia configurato per inviarla. Non sono state aggiunte operazioni per eliminare utenti.
 - **Limitazione**: `AdminUserGlobalSignOut` revoca le sessioni Cognito, ma gli access token JWT già emessi possono restare validi presso il JWT authorizer API Gateway fino alla loro naturale scadenza. Se serve un blocco immediato di tutte le chiamate API, è necessaria un'ulteriore verifica server-side dello stato account.
 - **Deploy**: esegui backup DynamoDB e, da AWS CloudShell, `python3 scripts/sync_lambda.py`, `python3 -m unittest discover -s tests -v`, `bash scripts/deploy.sh` dopo aver estratto lo ZIP. Il deploy aggiorna IAM Lambda e aggiunge 3 rotte API JWT. Testato localmente; l'ambiente AWS reale non è stato collaudato.
+
+
+## Correzione 2.2.5 — prima registrazione ricorrente
+
+Quando si attiva «Ripeti questo movimento» dal modulo «Nuovo movimento»,
+Moneta crea la regola e, se la data iniziale è oggi o nel passato, registra
+**anche la prima occorrenza** nel saldo, in un'unica transazione DynamoDB.
+Le scadenze successive restano gestite dallo scheduler giornaliero.
+La chiave della prima occorrenza è la medesima usata dallo scheduler: evita doppie registrazioni.
+Se la data iniziale è futura, non viene scalato alcun importo fino alla scadenza.
+Creare una regola direttamente in «Ricorrenze» mantiene il comportamento precedente.
+
+**Per regole create con la versione precedente:** se la regola è già presente e
+la prima scadenza manca, non crearne una identica: verificare lo storico e
+attendere il job schedulato oppure registrare manualmente la singola spesa
+solo dopo aver verificato che non esista già. Questo fix non addebita retroattivamente
+in automatico le regole già salvate.
+
+Aggiornamento: `python3 scripts/sync_lambda.py`, test, `bash scripts/deploy.sh`.
+Non cancellare tabelle, stack o pool Cognito.
+
+### Hotfix 2.2.7.1: validazione IAM policy CostsRole
+
+Corretto `cloudformation/backend.yml`: l’operatore IAM `Null` nella condition
+`CostCacheOnly` deve essere scritto `"Null"` in YAML per evitare che il parser
+lo interpreti come una chiave nulla. Nessuna variazione ai privilegi concessi,
+ai servizi AWS o ai dati. Aggiunto il test di regressione
+`test_costs_iam_null_condition_is_yaml_string`.
+
+Per verificare in CloudShell prima del deploy:
+
+```bash
+aws cloudformation validate-template --region eu-south-1 --template-body file://cloudformation/backend.yml
+```
+
+La validazione è eseguita con AWS solo dall’ambiente dell’utente: in locale i
+test possono verificare la struttura YAML ma non la risposta dell’API AWS.
+
+---
+
+## Moneta 2.3.0 — Conti personali, contanti e carte di credito
+
+Per le nuove funzionalità consulta [RELEASE_NOTES_2.3.0.md](RELEASE_NOTES_2.3.0.md) e [docs/CHECKLIST_CONTABILE_2.3.md](docs/CHECKLIST_CONTABILE_2.3.md).
+
+La versione usa solo i servizi AWS esistenti e introduce sei rotte API JWT. I conti non creano nuove tabelle. La modalità di addebito delle carte è **con conferma** di default. Prima di cambiare il saldo iniziale, confronta le operazioni esistenti: un importo già registrato come movimento iniziale non va registrato una seconda volta.

@@ -62,6 +62,8 @@ class FakeClient:
             if cond=='#v.#status = :scheduled' and (current or {}).get('value',{}).get('status')!='scheduled':self.table.fail('TransactionCanceledException')
             if cond=='#v.#version = :previous' and (current or {}).get('value',{}).get('version')!=values[':previous']:self.table.fail('TransactionCanceledException')
             if cond=='attribute_exists(PK)' and not current:self.table.fail('TransactionCanceledException')
+            if cond=='revision = :r AND chargeCents = :amount' and ((current or {}).get('revision')!=values[':r'] or (current or {}).get('chargeCents')!=values[':amount']):
+                self.table.fail('TransactionCanceledException')
             if kind=='Put':changes.append(('put',key))
             elif kind=='Delete':changes.append(('del',key))
         for action in TransactItems:
@@ -69,6 +71,13 @@ class FakeClient:
             if kind=='Put':
                 row={k:DE.deserialize(v) for k,v in x['Item'].items()}
                 self.table.items[(row['PK'],row['SK'])]=row
+            elif kind=='Update':
+                key={k:DE.deserialize(v) for k,v in x['Key'].items()}
+                values={k:DE.deserialize(v) for k,v in x['ExpressionAttributeValues'].items()}
+                row=self.table.items.get((key['PK'],key['SK']),{'PK':key['PK'],'SK':key['SK']})
+                row['chargeCents']=row.get('chargeCents',0)+values[':delta']
+                row['revision']=row.get('revision',0)+values[':one']
+                self.table.items[(key['PK'],key['SK'])]=row
             elif kind=='Delete':
                 key={k:DE.deserialize(v) for k,v in x['Key'].items()}
                 self.table.items.pop((key['PK'],key['SK']),None)

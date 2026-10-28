@@ -98,7 +98,8 @@ def validate_record(obj, expected_id=None):
     # Solo i campi dichiarati vengono persistiti.
     return {'id': ident, 'description': description.strip(), 'type': kind,
             'category': category, 'date': date_value(obj.get('date')).isoformat(),
-            'amountCents': cents(obj.get('amount')), 'note': note}
+            'amountCents': cents(obj.get('amount')), 'note': note,
+            'accountId': account_id(obj.get('accountId','bank'))}
 
 def validate_rule(obj, expected_id=None):
     record = validate_record({**obj, 'date': obj.get('startDate')}, expected_id)
@@ -204,6 +205,7 @@ def run_recurring(today=None):
             for due in due_dates(rule,today):
                 txid = 'rec-'+rule['id'][:45]+'-'+due.strftime('%Y%m%d')
                 rec = {k:rule[k] for k in ('description','type','category','note','amountCents')}
+                rec['accountId']=rule.get('accountId','bank')
                 rec.update({'id':txid,'date':due.isoformat(),'recurringId':rule['id']})
                 try:
                     if row['PK'].startswith('SPACE#'):
@@ -221,8 +223,12 @@ def run_recurring(today=None):
                                                        'SK':'TX#'+mirror['id'],'value':mirror}))
                         txn(actions)
                     else:
-                        TABLE.put_item(Item={'PK':row['PK'],'SK':'TX#'+txid,'value':rec},
-                                       ConditionExpression='attribute_not_exists(PK)')
+                        checks=card_transaction_guard(row['PK'],rec)
+                        if checks:
+                            txn(checks+[put_action({'PK':row['PK'],'SK':'TX#'+txid,'value':rec})])
+                        else:
+                            TABLE.put_item(Item={'PK':row['PK'],'SK':'TX#'+txid,'value':rec},
+                                           ConditionExpression='attribute_not_exists(PK)')
                     created += 1
                 except ClientError as err:
                     code = err.response['Error']['Code']
@@ -342,6 +348,8 @@ def mirrored_transaction(space_id, original):
     """
     personal_funded = original.get('paymentSource') == 'personal'
     item = {k:original[k] for k in ('description','category','date','note','amountCents')}
+    if personal_funded:
+        item['accountId'] = original.get('accountId','bank')
     item['id'] = linked_id(space_id, original['id'])
     item['type'] = 'expense' if personal_funded else original['type']
     if personal_funded and original['type'] == 'income':
@@ -560,7 +568,7 @@ def validated_favorite(payload, expected_id=None):
         raise BadRequest('Pagamento preferito non valido')
     return {'id':ident,'spaceId':space_id,'type':kind,'category':category,
             'description':description.strip(),'amountCents':cents(payload.get('amount')),
-            'paymentSource':source,'note':note}
+            'paymentSource':source,'note':note,'accountId':account_id(payload.get('accountId','bank'))}
 
 
 def favorites_for(sub, space_id):
@@ -595,6 +603,7 @@ def complete_planned(data_pk, space_id, sub, ident, paid_date):
     if len(txid) > 80:
         raise BadRequest('ID scadenza troppo lungo')
     record = {key:plan[key] for key in ('description','type','category','amountCents','note')}
+    record['accountId']=plan.get('accountId','bank')
     record.update({'id':txid,'date':date_value(paid_date).isoformat(),'plannedId':ident})
     actions = []
     if space_id:
@@ -610,6 +619,9 @@ def complete_planned(data_pk, space_id, sub, ident, paid_date):
     if space_id:
         mirror = mirrored_transaction(space_id,record)
         actions.append(put_action({'PK':user_key(sub),'SK':'TX#'+mirror['id'],'value':mirror}))
+    if not space_id:
+        account_for(data_pk,record.get('accountId','bank'),expense=record['type']=='expense')
+        actions=card_transaction_guard(data_pk,record)+actions
     txn(actions)
     return {'completed':True,'transactionId':txid}
 
@@ -1007,8 +1019,7 @@ def simulate_finances(sub, payload):
     state=state_for(user_key(sub))
     today=dt.datetime.now(ZoneInfo('Europe/Rome')).date()
     tx=[t for t in state['transactions'] if t['date']<=today.isoformat()]
-    liquid=sum(round(Decimal(str(t['amount']))*100)*(1 if t['type']=='income' else -1)
-               for t in tx if t.get('affectsBalance',True))
+    liquid=int(round(Decimal(str(accounts_state(user_key(sub))['netLiquidity']))*100))
     first=today.replace(day=1)
     # Ultimi tre mesi COMPLETI, senza trasferimenti e storni.
     sample=[]
@@ -1056,8 +1067,7 @@ def private_insights(sub):
     transactions=state['transactions']
     today=dt.datetime.now(ZoneInfo('Europe/Rome')).date()
     relevant=[t for t in transactions if t['date']<=today.isoformat()]
-    liquid=sum(round(Decimal(str(t['amount']))*100)*(1 if t['type']=='income' else -1)
-               for t in relevant if t.get('affectsBalance',True))
+    liquid=int(round(Decimal(str(accounts_state(pk)['netLiquidity']))*100))
     assets=[capital_public(r['value']) for r in list_prefix(pk,'ASSET#')]
     totals={kind:sum(round(Decimal(str(a['amount']))*100) for a in assets if a['kind']==kind)
             for kind in ('investment','other','cash_outside_ledger','debt')}
@@ -1134,11 +1144,249 @@ def private_insights(sub):
             'totals':{k:v/100 for k,v in totals.items()},
             'lastThreeMonths':monthly,'essentialAverage':essential_avg/100,
             'coverageMonths':coverage,'notices':notices,'portfolio':portfolio,
-            'assumptions':['Il saldo personale è la liquidità tracciata dai movimenti.',
-                'Il contante esterno al registro va inserito separatamente.',
+            'assumptions':['La liquidità netta include banca, contanti e debiti delle carte a saldo.',
+                'Non duplicare gli importi del nuovo registro Contanti negli asset di liquidità esterni.',
                 'Nessuna quota del fondo condiviso è attribuita automaticamente al patrimonio personale.',
                 'Versamenti e rimborsi tracciati non sono reddito o spesa nei consigli.']}
 
+
+
+# --- Moneta 2.3: conti, contanti, carte a saldo differito ---
+DEFAULT_ACCOUNT_IDS = frozenset(('bank','cash'))
+ACCOUNT_LIMIT = 8
+
+def account_id(value):
+    if not isinstance(value,str) or not ID_RE.fullmatch(value):
+        raise BadRequest('Conto di pagamento non valido')
+    return value
+
+def money_cents(value, allow_zero=True):
+    return cents(value, allow_zero=allow_zero)
+
+def user_accounts(pk):
+    accounts = {
+        'bank':{'id':'bank','name':'Conto corrente','kind':'bank','openingCents':0},
+        'cash':{'id':'cash','name':'Contanti','kind':'cash','openingCents':0},
+    }
+    for row in list_prefix(pk,'ACCOUNT#'):
+        if not row.get('SK','').startswith('ACCOUNT#') or not row.get('value'):
+            continue
+        value = dict(row['value'])
+        accounts[value['id']] = value
+    return accounts
+
+def account_for(pk, ident, expense=False):
+    account = user_accounts(pk).get(account_id(ident))
+    if not account or account.get('inactive'):
+        raise BadRequest('Conto inesistente o disattivato')
+    if account['kind']=='credit' and not expense:
+        raise BadRequest('Le entrate non possono essere accreditate su carta a saldo')
+    return account
+
+def account_record(payload, ident=None, previous=None):
+    if ident is None:
+        ident = account_id(payload.get('id'))
+        if ident in DEFAULT_ACCOUNT_IDS:
+            raise BadRequest('Identificativo riservato')
+        kind = 'credit'
+    else:
+        kind = (previous or {}).get('kind')
+        if kind not in ('bank','cash','credit'):
+            raise BadRequest('Tipo conto non valido')
+    name = payload.get('name', (previous or {}).get('name',''))
+    if not isinstance(name,str) or not 2 <= len(name.strip()) <= 60:
+        raise BadRequest('Nome conto non valido')
+    opening = money_cents(payload.get('openingBalance',(previous or {}).get('openingCents',0)/100))
+    if kind!='credit':
+        return {'id':ident,'name':name.strip(),'kind':kind,'openingCents':opening}
+    closing = payload.get('closingDay',(previous or {}).get('closingDay',25))
+    charge = payload.get('chargeDay',(previous or {}).get('chargeDay',10))
+    offset = payload.get('chargeMonthOffset',(previous or {}).get('chargeMonthOffset',1))
+    mode = payload.get('settlementMode',(previous or {}).get('settlementMode','confirm'))
+    if type(closing) is not int or type(charge) is not int or not 1<=closing<=31 or not 1<=charge<=31:
+        raise BadRequest('Giorni della carta non validi')
+    if type(offset) is not int or offset not in (0,1):
+        raise BadRequest('Mese di addebito non valido')
+    if offset == 0 and (charge <= closing or charge > 28):
+        raise BadRequest('Per un addebito nello stesso mese scegli un giorno successivo alla chiusura, entro il 28')
+    if mode not in ('confirm','automatic'):
+        raise BadRequest('Modalità di addebito non valida')
+    # Le modifiche automatiche non sono retroattive.
+    auto_from = (previous or {}).get('autoFrom') if mode=='automatic' and (previous or {}).get('settlementMode')=='automatic' else None
+    if mode=='automatic' and not auto_from:
+        auto_from = dt.datetime.now(ZoneInfo('Europe/Rome')).date().isoformat()
+    return {'id':ident,'name':name.strip(),'kind':'credit','openingCents':0,
+            'closingDay':closing,'chargeDay':charge,'chargeMonthOffset':offset,
+            'settlementMode':mode,'autoFrom':auto_from}
+
+def close_date(account, cycle):
+    first = date_value(cycle+'-01')
+    return first.replace(day=min(account['closingDay'],calendar.monthrange(first.year,first.month)[1]))
+
+def card_cycle(account, date):
+    date = date_value(date) if isinstance(date,str) else date
+    cycle_start = date.replace(day=1)
+    if date > close_date(account,cycle_start.strftime('%Y-%m')):
+        cycle_start = month_offset(cycle_start,1)
+    return cycle_start.strftime('%Y-%m')
+
+def card_due(account, cycle):
+    base = month_offset(date_value(cycle+'-01'),account['chargeMonthOffset'])
+    return base.replace(day=min(account['chargeDay'],calendar.monthrange(base.year,base.month)[1])).isoformat()
+
+def settlement_sk(card,cycle):
+    return 'SETTLE#'+card+'#'+cycle
+
+def cycle_sk(card, cycle):
+    return 'CYCLE#'+card+'#'+cycle
+
+def card_transaction_guard(pk, record, previous=None):
+    """Maintain a revisioned card-cycle total in the *same transaction* as every purchase.
+
+    Settlement checks this revision atomically, so a purchase racing with a
+    settlement cannot be omitted from the billed amount. A settled cycle remains
+    immutable. The operation also validates edits that move a charge between cycles.
+    """
+    if all(not rec or rec.get('accountId','bank') in DEFAULT_ACCOUNT_IDS for rec in (record,previous)):
+        return []
+    accounts=user_accounts(pk)
+    touched={}
+    for rec,sign in ((previous,-1),(record,1)):
+        if not rec:
+            continue
+        card=accounts.get(rec.get('accountId','bank'))
+        if not card or card['kind']!='credit':
+            continue
+        key=(card['id'],card_cycle(card,rec['date']))
+        touched[key]=touched.get(key,0)+sign*int(rec['amountCents'])*(1 if rec['type']=='expense' else -1)
+    checks=[]
+    for (ident,cycle),delta in touched.items():
+        checks.append({'ConditionCheck':{'TableName':TABLE.name,
+            'Key':wire({'PK':pk,'SK':settlement_sk(ident,cycle)}),
+            'ConditionExpression':'attribute_not_exists(PK)'}})
+        if delta:
+            checks.append({'Update':{'TableName':TABLE.name,
+                'Key':wire({'PK':pk,'SK':cycle_sk(ident,cycle)}),
+                'UpdateExpression':'ADD chargeCents :delta, revision :one',
+                'ExpressionAttributeValues':wire({':delta':delta,':one':1})}})
+    return checks
+
+def card_cycles(pk, rows, accounts):
+    cycles={}
+    for row in rows:
+        if not row['SK'].startswith('TX#') or row.get('skipped'):
+            continue
+        t=row['value']; ident=t.get('accountId','bank')
+        if ident not in accounts or accounts[ident]['kind']!='credit' or t.get('affectsBalance',True) is False:
+            continue
+        cycle=card_cycle(accounts[ident],t['date'])
+        cycles[(ident,cycle)]=cycles.get((ident,cycle),0)+(t['amountCents'] if t['type']=='expense' else -t['amountCents'])
+    today=dt.datetime.now(ZoneInfo('Europe/Rome')).date().isoformat()
+    out=[]
+    for (ident,cycle),amount in sorted(cycles.items(),reverse=True):
+        if amount <= 0: continue
+        row=next((r for r in rows if r['SK']==settlement_sk(ident,cycle)),None)
+        paid=int(row['value']['amountCents']) if row else 0
+        due=card_due(accounts[ident],cycle)
+        out.append({'cardId':ident,'cycle':cycle,'closingDate':close_date(accounts[ident],cycle).isoformat(),
+                    'dueDate':due,'amount':amount/100,'paid':paid/100,'remaining':(amount-paid)/100,
+                    'status':'paid' if paid else ('overdue' if due<today else 'scheduled'),
+                    'paidDate':row['value'].get('paidDate') if row else None})
+    return out
+
+def accounts_state(pk):
+    rows=query_user(pk)
+    accounts=user_accounts(pk)
+    balances={a:int(v.get('openingCents',0)) for a,v in accounts.items()}
+    for row in rows:
+        sk=row['SK']
+        if sk.startswith('TX#') and not row.get('skipped'):
+            t=row['value']
+            if t.get('affectsBalance',True) is False or t['date']>dt.datetime.now(ZoneInfo('Europe/Rome')).date().isoformat():
+                continue
+            ident=t.get('accountId','bank')
+            if ident in balances:
+                balances[ident]+=(1 if t['type']=='income' else -1)*int(t['amountCents'])
+        elif sk.startswith('XFER#'):
+            t=row['value']
+            if t['date']<=dt.datetime.now(ZoneInfo('Europe/Rome')).date().isoformat():
+                balances[t['fromAccountId']]-=int(t['amountCents'])
+                balances[t['toAccountId']]+=int(t['amountCents'])
+        elif sk.startswith('SETTLE#'):
+            payment=row['value']
+            if payment['paidDate']<=dt.datetime.now(ZoneInfo('Europe/Rome')).date().isoformat():
+                balances['bank']-=int(payment['amountCents'])
+                balances[payment['cardId']]+=int(payment['amountCents'])
+    cycles=card_cycles(pk,rows,accounts)
+    result=[]
+    for key,item in accounts.items():
+        result.append({k:v for k,v in item.items() if k!='openingCents'} |
+                      {'openingBalance':item.get('openingCents',0)/100,'balance':balances[key]/100})
+    reversed_transfers={r['SK'][8:] for r in rows if r['SK'].startswith('REVXFER#')}
+    transfers=[{**r['value'],'amount':r['value']['amountCents']/100,
+                'reversed':r['value']['id'] in reversed_transfers} for r in rows if r['SK'].startswith('XFER#')]
+    transfers.sort(key=lambda t:(t['date'],t['id']),reverse=True)
+    bank=balances.get('bank',0);cash=balances.get('cash',0)
+    debt=sum(-balances[k] for k,v in accounts.items() if v['kind']=='credit')
+    return {'accounts':result,'cycles':cycles[:150],'transfers':transfers[:100],
+            'bankBalance':bank/100,'cashBalance':cash/100,'creditDebt':debt/100,
+            'available':(bank+cash)/100,'netLiquidity':(bank+cash-debt)/100}
+
+def settle_card(pk,card_id,cycle,paid_date,automated=False):
+    card=account_for(pk,card_id,expense=True)
+    if card['kind']!='credit': raise BadRequest('Seleziona una carta di credito')
+    if not re.fullmatch(r'\d{4}-\d{2}',cycle or ''):
+        raise BadRequest('Ciclo di addebito non valido')
+    date_value(cycle+'-01')
+    paid=date_value(paid_date).isoformat()
+    if close_date(card,cycle).isoformat() > paid:
+        raise BadRequest('Non puoi saldare un estratto conto prima della chiusura')
+    if paid > dt.datetime.now(ZoneInfo('Europe/Rome')).date().isoformat():
+        raise BadRequest('Data di addebito futura: attendi la scadenza')
+    rows=query_user(pk)
+    cycles=card_cycles(pk,rows,user_accounts(pk))
+    found=next((x for x in cycles if x['cardId']==card_id and x['cycle']==cycle),None)
+    if not found or found['status']=='paid':
+        raise BadRequest('Estratto conto già saldato o senza movimenti')
+    amount=int(Decimal(str(found['amount']))*100)
+    key=settlement_sk(card_id,cycle)
+    payment={'cardId':card_id,'cycle':cycle,'amountCents':amount,'paidDate':paid,'automatic':automated,
+             'createdAt':dt.datetime.now(dt.timezone.utc).isoformat()}
+    current_cycle=get_row(pk,cycle_sk(card_id,cycle))
+    if not current_cycle or int(current_cycle.get('chargeCents',0)) != amount:
+        raise BadRequest('Importo del ciclo non allineato: aggiorna i dati e riprova')
+    expected_revision=int(current_cycle['revision'])
+    # A purchase and its cycle total update are atomic. Settlement includes a
+    # consistent revision check and cannot miss a concurrently recorded charge.
+    txn([{'ConditionCheck':{'TableName':TABLE.name,
+                            'Key':wire({'PK':pk,'SK':cycle_sk(card_id,cycle)}),
+                            'ConditionExpression':'revision = :r AND chargeCents = :amount',
+                            'ExpressionAttributeValues':wire({':r':expected_revision,':amount':amount})}},
+         put_action({'PK':pk,'SK':key,'value':payment})])
+    return {'cardId':card_id,'cycle':cycle,'amount':amount/100,'paidDate':paid,'automatic':automated}
+
+def run_auto_card_settlements(today):
+    processed=0;last=None
+    while True:
+        params={'FilterExpression':'begins_with(SK,:p)','ExpressionAttributeValues':{':p':'ACCOUNT#'},'ProjectionExpression':'PK,SK,#v',
+                'ExpressionAttributeNames':{'#v':'value'}}
+        if last:params['ExclusiveStartKey']=last
+        result=TABLE.scan(**params)
+        for row in result.get('Items',[]):
+            card=row['value']
+            if card.get('kind')!='credit' or card.get('settlementMode')!='automatic':continue
+            pk=row['PK']
+            for cycle in card_cycles(pk,query_user(pk),user_accounts(pk)):
+                if cycle['cardId']!=card['id'] or cycle['status']=='paid':continue
+                if cycle['dueDate']>today.isoformat() or cycle['dueDate']<card.get('autoFrom','9999-12-31'):continue
+                try:
+                    settle_card(pk,card['id'],cycle['cycle'],cycle['dueDate'],automated=True)
+                    processed+=1
+                except (BadRequest,ClientError):
+                    LOG.warning('Non posso addebitare automaticamente la carta %s',card['id'])
+        last=result.get('LastEvaluatedKey')
+        if not last: break
+    return processed
 
 def state_for(pk):
     tx, budgets, rules, planned = [], {}, [], []
@@ -1191,6 +1439,70 @@ def handle_request(event, claims, sub, pk, route, params):
         data_pk = space_key(space_id)
     else:
         data_pk = pk
+    # Operazioni sul solo patrimonio personale: mai su fondi condivisi.
+    if route.startswith(('GET /accounts','POST /accounts','PUT /accounts','POST /transfers','POST /cards/')):
+        if space_id: raise BadRequest('I conti appartengono esclusivamente al bilancio personale')
+    if route == 'GET /accounts':
+        return response(200,accounts_state(pk))
+    if route == 'POST /accounts':
+        payload=body_json(event)
+        if sum(a['kind']=='credit' for a in user_accounts(pk).values())>=ACCOUNT_LIMIT:
+            raise BadRequest('Numero massimo di carte raggiunto')
+        item=account_record(payload)
+        if item['kind']!='credit':raise BadRequest('Tipo conto non supportato')
+        TABLE.put_item(Item={'PK':pk,'SK':'ACCOUNT#'+item['id'],'value':item},ConditionExpression='attribute_not_exists(PK)')
+        return response(201,{'id':item['id'],'kind':item['kind']})
+    if route == 'PUT /accounts/{id}':
+        ident=account_id(params.get('id'))
+        previous=user_accounts(pk).get(ident)
+        if not previous: raise KeyError('Conto inesistente')
+        payload=body_json(event)
+        item=account_record(payload,ident,previous)
+        if previous['kind']=='credit' and any(item[k]!=previous[k] for k in ('closingDay','chargeDay','chargeMonthOffset')):
+            rows=query_user(pk)
+            if any(r['SK'].startswith('SETTLE#'+ident+'#') or (r['SK'].startswith('TX#') and r.get('value',{}).get('accountId')==ident) for r in rows):
+                raise BadRequest('Non puoi cambiare le date di una carta con movimenti: creane una nuova')
+        condition='attribute_exists(PK)' if ident not in DEFAULT_ACCOUNT_IDS else None
+        kw={'Item':{'PK':pk,'SK':'ACCOUNT#'+ident,'value':item}}
+        if condition:kw['ConditionExpression']=condition
+        TABLE.put_item(**kw)
+        return response(200,{'id':ident,'kind':item['kind']})
+    if route == 'POST /transfers':
+        data=body_json(event)
+        ident=account_id(data.get('id'))
+        from_id=account_id(data.get('fromAccountId'))
+        to_id=account_id(data.get('toAccountId'))
+        if from_id==to_id:raise BadRequest('Origine e destinazione non possono coincidere')
+        acc=user_accounts(pk)
+        if any(x not in acc or acc[x]['kind'] not in ('bank','cash') for x in (from_id,to_id)):
+            raise BadRequest('Trasferimenti consentiti solo fra conto corrente e contanti')
+        amount=cents(data.get('amount'))
+        note=data.get('note','')
+        if not isinstance(note,str) or len(note)>200:raise BadRequest('Nota non valida')
+        item={'id':ident,'fromAccountId':from_id,'toAccountId':to_id,'amountCents':amount,
+              'date':date_value(data.get('date')).isoformat(),'note':note}
+        TABLE.put_item(Item={'PK':pk,'SK':'XFER#'+ident,'value':item},ConditionExpression='attribute_not_exists(PK)')
+        return response(201,{**item,'amount':amount/100})
+    if route == 'POST /transfers/{id}/reverse':
+        transfer_id=account_id(params.get('id'))
+        original=get_row(pk,'XFER#'+transfer_id)
+        if not original or original['value'].get('reversalOf'):
+            raise KeyError('Trasferimento non trovato')
+        reason=body_json(event).get('reason','')
+        if not isinstance(reason,str) or not 8<=len(reason.strip())<=200:
+            raise BadRequest('Motivo di storno obbligatorio (8–200 caratteri)')
+        data=original['value']
+        reversal={'id':'rev-'+transfer_id,'fromAccountId':data['toAccountId'],
+                  'toAccountId':data['fromAccountId'],'amountCents':data['amountCents'],
+                  'date':data['date'],'note':'Storno: '+reason.strip(),'reversalOf':transfer_id}
+        marker={'PK':pk,'SK':'REVXFER#'+transfer_id,'reason':reason.strip(),
+                'createdAt':dt.datetime.now(dt.timezone.utc).isoformat()}
+        txn([put_action(marker),put_action({'PK':pk,'SK':'XFER#'+reversal['id'],'value':reversal})])
+        return response(201,{'reversed':True,'originalId':transfer_id})
+    if route == 'POST /cards/{id}/cycles/{cycle}/settle':
+        payload=body_json(event)
+        result=settle_card(pk,account_id(params.get('id')),params.get('cycle'),payload.get('paidDate'))
+        return response(201,result)
     if route == 'GET /fund':
         if not space_id:
             raise BadRequest('Seleziona un fondo condiviso')
@@ -1273,6 +1585,8 @@ def handle_request(event, claims, sub, pk, route, params):
     if route in ('POST /planned','PUT /planned/{id}'):
         rid = params.get('id') if route.startswith('PUT') else None
         payload = planned_record(body_json(event),rid)
+        if not space_id or payload.get('paymentSource') == 'personal':
+            account_for(pk,payload.get('accountId','bank'),expense=payload['type']=='expense')
         old = get_row(data_pk,'PLAN#'+rid) if rid else None
         if rid and (not old or old['value'].get('status')!='scheduled'):
             raise BadRequest('Puoi modificare solo scadenze ancora da pagare')
@@ -1320,6 +1634,8 @@ def handle_request(event, claims, sub, pk, route, params):
         rid = params.get('id') if route.startswith('PUT') else None
         payload = body_json(event)
         record = validate_record(payload,rid)
+        if not space_id or payload.get('paymentSource')=='personal':
+            account_for(pk,record['accountId'],expense=record['type']=='expense')
         if space_id:
             share_record(record, payload.get('paymentSource','fund'))
             method = 'update' if rid else 'create'
@@ -1336,8 +1652,14 @@ def handle_request(event, claims, sub, pk, route, params):
             if rec_id:
                 record['recurringId'] = rec_id
         try:
-            TABLE.put_item(Item={'PK':pk,'SK':'TX#'+record['id'],'value':record},
-                           ConditionExpression='attribute_exists(PK)' if rid else 'attribute_not_exists(PK)')
+            checks=card_transaction_guard(pk,record,(previous.get('value') if rid else None))
+            if checks:
+                put=put_action({'PK':pk,'SK':'TX#'+record['id'],'value':record},
+                               'attribute_exists(PK)' if rid else 'attribute_not_exists(PK)')
+                txn(checks+[put])
+            else:
+                TABLE.put_item(Item={'PK':pk,'SK':'TX#'+record['id'],'value':record},
+                               ConditionExpression='attribute_exists(PK)' if rid else 'attribute_not_exists(PK)')
         except ClientError as err:
             if err.response['Error']['Code'] == 'ConditionalCheckFailedException':
                 return response(404 if rid else 409,{'error':'Movimento inesistente o duplicato'})
@@ -1363,13 +1685,22 @@ def handle_request(event, claims, sub, pk, route, params):
                 if space_id:
                     txn([auth_check(space_id,sub),put_action({'PK':data_pk,'SK':sk,'skipped':True},'attribute_exists(PK)')])
                 else:
-                    TABLE.put_item(Item={'PK':data_pk,'SK':sk,'skipped':True},ConditionExpression='attribute_exists(PK)')
+                    prior=old.get('value')
+                    guards=card_transaction_guard(pk,None,prior) if prior else []
+                    if guards:
+                        txn(guards+[put_action({'PK':data_pk,'SK':sk,'skipped':True},'attribute_exists(PK)')])
+                    else:
+                        TABLE.put_item(Item={'PK':data_pk,'SK':sk,'skipped':True},ConditionExpression='attribute_exists(PK)')
                 return response(204)
         try:
             if space_id:
                 txn([auth_check(space_id,sub),del_action(data_pk,sk)])
             else:
-                TABLE.delete_item(Key={'PK':data_pk,'SK':sk},ConditionExpression='attribute_exists(PK)')
+                original=(old.get('value') if sk.startswith('TX#') else None)
+                if original and user_accounts(pk).get(original.get('accountId','bank'),{}).get('kind')=='credit':
+                    txn(card_transaction_guard(pk,None,original)+[del_action(data_pk,sk)])
+                else:
+                    TABLE.delete_item(Key={'PK':data_pk,'SK':sk},ConditionExpression='attribute_exists(PK)')
         except ClientError as err:
             if err.response['Error']['Code'] == 'ConditionalCheckFailedException':
                 return response(404,{'error':'Elemento inesistente'})
@@ -1379,6 +1710,8 @@ def handle_request(event, claims, sub, pk, route, params):
         rid = params.get('id') if route.startswith('PUT') else None
         payload = body_json(event)
         record = validate_rule(payload,rid)
+        if not space_id or payload.get('paymentSource')=='personal':
+            account_for(pk,record['accountId'],expense=record['type']=='expense')
         # Solo il modulo Nuovo movimento richiede la registrazione immediata.
         # Una ricorrenza creata dalla schermata Regole mantiene il vecchio comportamento.
         record_first = payload.get('recordFirstOccurrence', False)
@@ -1392,7 +1725,7 @@ def handle_request(event, claims, sub, pk, route, params):
         if first_due:
             due = date_value(record['startDate'])
             txid = 'rec-'+record['id'][:45]+'-'+due.strftime('%Y%m%d')
-            first_tx = {k:record[k] for k in ('description','type','category','note','amountCents')}
+            first_tx = {k:record[k] for k in ('description','type','category','note','amountCents','accountId')}
             first_tx.update({'id':txid,'date':due.isoformat(),'recurringId':record['id']})
         if space_id:
             source = payload.get('paymentSource','fund')
@@ -1414,7 +1747,8 @@ def handle_request(event, claims, sub, pk, route, params):
         try:
             if first_tx:
                 # Regola e primo movimento atomici: nessuna regola orfana se fallisce la creazione.
-                txn([put_action({'PK':pk,'SK':'REC#'+record['id'],'value':record}),
+                txn(card_transaction_guard(pk,first_tx)+
+                    [put_action({'PK':pk,'SK':'REC#'+record['id'],'value':record}),
                      put_action({'PK':pk,'SK':'TX#'+first_tx['id'],'value':first_tx})])
             else:
                 TABLE.put_item(Item={'PK':pk,'SK':'REC#'+record['id'],'value':record},
@@ -1439,7 +1773,9 @@ def handle_request(event, claims, sub, pk, route, params):
 
 def handler(event, context):
     if event.get('source') == 'aws.scheduler' and event.get('operation') == 'recurring-tick':
-        return run_recurring()
+        result=run_recurring()
+        result['cardSettlements']=run_auto_card_settlements(dt.datetime.now(ZoneInfo('Europe/Rome')).date())
+        return result
     claims = (((event.get('requestContext') or {}).get('authorizer') or {}).get('jwt') or {}).get('claims') or {}
     sub = claims.get('sub')
     if not isinstance(sub,str) or not sub or claims.get('token_use') != 'access' or claims.get('client_id') != CLIENT_ID:

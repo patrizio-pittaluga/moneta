@@ -621,6 +621,25 @@ Resources:
   CapitalPutRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties: {ApiId: !Ref HttpApi, RouteKey: 'PUT /capital/items/{id}', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}
+  # Moneta 2.3: stesso HTTP API/JWT, stessi ruoli IAM; nessun servizio nuovo.
+  AccountsGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: 'GET /accounts', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}
+  AccountsPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: 'POST /accounts', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}
+  AccountsPutRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: 'PUT /accounts/{id}', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}
+  TransfersPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: 'POST /transfers', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}
+  TransferReverseRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: 'POST /transfers/{id}/reverse', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}
+  CardCycleSettleRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties: {ApiId: !Ref HttpApi, RouteKey: 'POST /cards/{id}/cycles/{cycle}/settle', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}
   FavoritesGetRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties: {ApiId: !Ref HttpApi, RouteKey: 'GET /favorites', Target: !Sub 'integrations/${ApiIntegration}', AuthorizationType: JWT, AuthorizerId: !Ref JwtAuthorizer}

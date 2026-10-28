@@ -43,6 +43,8 @@ check('ce:GetCostAndUsage' not in back.split('  ApiLambdaRole:',1)[1].split('  A
       'Finance role still has cost read privileges')
 check('dynamodb:LeadingKeys' in back and "'SYSTEM#AWS_COSTS'" in back,
       'Cost cache not restricted to dedicated partition')
+check(not re.search(r'(?m)^\s+Null\s*:', back),
+      'IAM YAML operator Null must be quoted as "Null" (otherwise parses as a null key)')
 check('AdminUsersLambda:' in back and 'CostsLambda:' in back, 'Admin roles not isolated')
 check('require_admin(event' in (ROOT/'lambda/admin_users.py').read_text(), 'User admin lacks live group check')
 check('require_admin(event' in (ROOT/'lambda/admin_costs.py').read_text(), 'Cost lambda lacks live group check')

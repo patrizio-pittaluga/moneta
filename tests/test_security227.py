@@ -110,6 +110,17 @@ class Security227Tests(unittest.TestCase):
         self.assertIn('SYSTEM#AWS_COSTS',str(resources['CostsRole']))
         self.assertIn("'false'", (ROOT/'cloudformation/backend.yml').read_text().split('Sid: CostCacheOnly',1)[1])
 
+    def test_costs_iam_null_condition_is_yaml_string(self):
+        # YAML 1.1 considers unquoted Null a null key; IAM needs the string operator "Null".
+        resources = read_template('backend.yml')['Resources']
+        statements = resources['CostsRole']['Properties']['Policies'][0]['PolicyDocument']['Statement']
+        cache = next(statement for statement in statements if statement.get('Sid') == 'CostCacheOnly')
+        condition = cache['Condition']
+        self.assertNotIn(None, condition)
+        self.assertEqual(condition['Null']['dynamodb:LeadingKeys'], 'false')
+        self.assertEqual(condition['ForAllValues:StringEquals']['dynamodb:LeadingKeys'],
+                         ['SYSTEM#AWS_COSTS'])
+
     def test_api_routing_isolated(self):
         resources=read_template('backend.yml')['Resources']
         target=lambda name:resources[name]['Properties']['Target']
