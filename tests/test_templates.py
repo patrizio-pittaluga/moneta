@@ -42,8 +42,8 @@ class TestTemplates(unittest.TestCase):
     def test_backend_mfa_and_jwt_protection(self):
         x=read_template('backend.yml')['Resources']
         self.assertEqual(x['ApiLambda']['Properties']['Runtime'],'python3.13')
-        self.assertEqual(x['UserPool']['Properties']['MfaConfiguration'],'ON')
-        self.assertEqual(x['UserPool']['Properties']['EnabledMfas'],['SOFTWARE_TOKEN_MFA'])
+        self.assertEqual(x['UserPool']['Properties']['MfaConfiguration'],{'!Ref':'UserPoolMfaMode'})
+        self.assertEqual(x['UserPool']['Properties']['EnabledMfas'], {'!If':['MfaEnabled',['SOFTWARE_TOKEN_MFA'],{'!Ref':'AWS::NoValue'}]})
         self.assertEqual(x['UserPool']['Properties']['UserPoolTier'],'LITE')
         self.assertEqual(x['UserPool']['Properties']['AdminCreateUserConfig']['AllowAdminCreateUserOnly'],True)
         self.assertEqual(x['DataTable']['Properties']['BillingMode'],'PROVISIONED')

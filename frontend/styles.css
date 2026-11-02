@@ -159,3 +159,11 @@
 
 /* Moneta 2.3.2 - home advice & breakdown */
 .home-insights{margin-bottom:18px;border-color:#31574d}.home-insights .insight-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,265px),1fr));gap:12px}.home-insights .insight-advice{margin:0;background:#182b32}.insight-category{padding:11px 0;border-bottom:1px solid var(--stroke)}.insight-category .budget-head{display:flex;gap:9px;justify-content:space-between;flex-wrap:wrap;font-size:12px;margin-bottom:8px}.insight-category .track{height:8px}.upcoming-panel{margin-top:20px}.account-summary-card{min-width:0;overflow-wrap:anywhere}
+
+/* Moneta 2.3.3 - dettaglio liquidità visibile soltanto nel bilancio personale. */
+.home-account-breakdown{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0 15px;max-width:590px}
+.home-account-item{min-width:0;padding:12px 15px;border:1px solid rgba(168,224,222,.24);background:rgba(5,22,36,.34);border-radius:12px;display:flex;flex-direction:column;gap:7px}
+.home-account-item span{font-size:11px;line-height:1.4;color:#c6e1e6;font-weight:670}
+.home-account-item strong{font-size:clamp(18px,2.1vw,24px);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;color:#fff}
+@media(max-width:420px){.hero{padding:20px 17px}.home-account-breakdown{gap:8px}.home-account-item{padding:10px 11px}.home-account-item strong{font-size:clamp(15px,4.5vw,19px)}}
+@media(max-width:325px){.home-account-breakdown{grid-template-columns:1fr}}

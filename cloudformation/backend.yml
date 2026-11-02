@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Moneta - backend Milano; Cognito Lite e MFA TOTP obbligatoria,
+  Moneta - backend Milano; Cognito Lite e MFA configurabile,
   HTTP API JWT, Lambda Python e DynamoDB. DEPLOY SOLO IN eu-south-1.
 
 Parameters:
@@ -20,6 +20,12 @@ Parameters:
     AllowedPattern: '^[a-z0-9](?:[a-z0-9-]*[a-z0-9])$'
     Description: 'Prefisso pubblico Cognito univoco nella regione'
 
+  UserPoolMfaMode:
+    Type: String
+    Default: 'OFF'
+    AllowedValues: ['OFF', 'ON']
+    Description: 'MFA Cognito del pool: OFF accesso con password, ON TOTP obbligatorio. Vale per tutti gli utenti, anche Admins.'
+
   LambdaCodeBucket:
     Type: String
     Description: 'Bucket privato deployment eu-south-1 (Moneta 2.1)'
@@ -34,6 +40,7 @@ Parameters:
     Description: 'Chiave ZIP Lambda dashboard costi'
 
 Conditions:
+  MfaEnabled: !Equals [!Ref UserPoolMfaMode, 'ON']
   HasCustomDomain: !Not [!Equals [!Ref CustomDomainName, '']]
 
 Resources:
@@ -57,8 +64,8 @@ Resources:
           RequireNumbers: true
           RequireSymbols: true
           TemporaryPasswordValidityDays: 7
-      MfaConfiguration: "ON"
-      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      MfaConfiguration: !Ref UserPoolMfaMode
+      EnabledMfas: !If [MfaEnabled, [SOFTWARE_TOKEN_MFA], !Ref 'AWS::NoValue']
       AccountRecoverySetting:
         RecoveryMechanisms:
           - Name: verified_email

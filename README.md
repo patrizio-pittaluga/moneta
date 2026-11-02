@@ -1,4 +1,6 @@
-> **Ultimo hotfix: Moneta 2.3.1** — correzione delle date delle carte salvate in DynamoDB e del layout su smartphone. Leggi `RELEASE_NOTES_2.3.1.md` prima del deploy.
+> **Versione corrente: Moneta 2.3.3 — Panoramica banca/contanti e MFA Cognito disabilitata di default.** Leggi [`RELEASE_NOTES_2.3.3.md`](RELEASE_NOTES_2.3.3.md) prima del deploy. Le informazioni sulle release precedenti qui sotto sono storiche e possono descrivere vecchie impostazioni MFA.
+
+> **Storico 2.3.1:** correzione delle date carte e dei layout mobile.
 
 # Moneta 2.2.7 — Security Hardening
 

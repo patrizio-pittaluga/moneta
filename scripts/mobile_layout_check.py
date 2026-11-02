@@ -28,6 +28,9 @@ with sync_playwright() as playwright:
           document.getElementById('authView').classList.add('hidden');
           document.getElementById('appView').classList.remove('hidden');
           document.getElementById('mobileDock').classList.remove('hidden');
+          document.getElementById('homeAccountBreakdown').classList.remove('hidden');
+          document.getElementById('homeBankBalance').textContent = '€ 12.345,67';
+          document.getElementById('homeCashBalance').textContent = '€ 560,25';
           document.getElementById('accountsSummary').innerHTML =
             '<div class="account-summary-card"><span>Conto corrente</span><strong>€ 2.345,70</strong></div>'.repeat(4);
           document.getElementById('creditCardsRows').innerHTML =

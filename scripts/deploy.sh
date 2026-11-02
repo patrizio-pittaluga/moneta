@@ -11,6 +11,13 @@ COGNITO_PREFIX="${COGNITO_PREFIX:-}"
 # nei successivi deploy: evita di rimuovere l'alias quando non sono esportate.
 MONETA_CUSTOM_DOMAIN="${MONETA_CUSTOM_DOMAIN:-}"
 MONETA_ACM_CERT_ARN="${MONETA_ACM_CERT_ARN:-}"
+# La modalita MFA e' globale per lo User Pool: OFF per accesso mobile semplificato,
+# ON per ripristinare TOTP obbligatorio senza cambiare risorse/utenti.
+MONETA_MFA_MODE="${MONETA_MFA_MODE:-OFF}"
+if [[ "$MONETA_MFA_MODE" != 'OFF' && "$MONETA_MFA_MODE" != 'ON' ]]; then
+  echo 'ERRORE: MONETA_MFA_MODE deve essere OFF oppure ON.' >&2
+  exit 2
+fi
 
 # Evita due installazioni attive (e costi doppi) se i vecchi stack sono ancora presenti.
 for target in 'us-east-1:bilancio-frontend' 'eu-south-1:bilancio-backend'; do
@@ -108,7 +115,7 @@ aws cloudformation deploy \
   --stack-name "$BACKEND_STACK" \
   --template-file cloudformation/backend.yml \
   --capabilities CAPABILITY_IAM \
-  --parameter-overrides "CloudFrontDomain=$DOMAIN" "CognitoDomainPrefix=$COGNITO_PREFIX" "CustomDomainName=$MONETA_CUSTOM_DOMAIN" "LambdaCodeBucket=$CODE_BUCKET" "LambdaCodeKey=$CODE_KEY" "AdminCodeKey=$ADMIN_KEY" "CostsCodeKey=$COSTS_KEY" \
+  --parameter-overrides "CloudFrontDomain=$DOMAIN" "CognitoDomainPrefix=$COGNITO_PREFIX" "CustomDomainName=$MONETA_CUSTOM_DOMAIN" "LambdaCodeBucket=$CODE_BUCKET" "LambdaCodeKey=$CODE_KEY" "AdminCodeKey=$ADMIN_KEY" "CostsCodeKey=$COSTS_KEY" "UserPoolMfaMode=$MONETA_MFA_MODE" \
   --no-fail-on-empty-changeset
 
 API_URL="$(get_output eu-south-1 "$BACKEND_STACK" ApiUrl)"
@@ -150,4 +157,5 @@ printf 'Moneta (CloudFront AWS): https://%s/\n' "$DOMAIN"
 printf 'UserPool (Milano): %s\n' "$USER_POOL_ID"
 printf 'API (Milano): %s\n' "$API_URL"
 printf 'CloudFront: pay-as-you-go, senza WAF.\n'
+printf 'MFA Cognito: %s (configurazione globale dello User Pool).\n' "$MONETA_MFA_MODE"
 printf 'Utenti Cognito esistenti preservati durante gli aggiornamenti CloudFormation.\n'
