@@ -112,3 +112,47 @@
 #view-accounts h3{font-size:.95rem;margin:22px 0 12px}
 @media(max-width:900px){.account-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.account-summary-grid{gap:9px}.account-summary-card{padding:14px;gap:9px}.account-summary-card strong{font-size:1.10rem}#view-accounts .service>span:last-child{justify-content:flex-start}}
+
+/* Moneta 2.3.1 — correzioni responsive mirate: non nascondere gli overflow delle tabelle. */
+.workspace,.content,.view,.panel,.chart-grid,.form-grid,.field,.panel-title>div{min-width:0}
+.input,select,input,textarea{min-width:0;max-width:100%}
+.service>span,.fund-row>span,.fund-row>div{min-width:0;overflow-wrap:anywhere}
+.service strong,.fund-row strong{overflow-wrap:anywhere}
+.panel-title h2,.page-title-row h1{overflow-wrap:anywhere}
+@media(max-width:760px){
+  .content{width:100%;max-width:100%;padding-left:clamp(11px,3.6vw,18px);padding-right:clamp(11px,3.6vw,18px)}
+  .mobile-dock:not(.hidden){grid-template-columns:minmax(0,1fr) minmax(0,1fr) 62px minmax(0,1fr) minmax(0,1fr)}
+  .mobile-dock button{min-width:0}
+  .filterbar{gap:8px;flex-wrap:wrap}
+  .filterbar strong{min-width:0;flex:1 1 110px}
+  .filterbar .spacer{display:none}
+  .filterbar>.muted{flex:1 1 100%;text-align:center}
+  .fund-row{min-width:0;flex-wrap:wrap}
+  .fund-row strong{white-space:normal}
+  .service{min-width:0;flex-wrap:wrap;align-items:flex-start}
+  .service>span:last-child{max-width:100%}
+  .event-row{min-width:0}
+  .event-actions{flex:0 1 auto}
+  .calendar-controls{min-width:0;max-width:100%;flex-wrap:wrap;justify-content:flex-end}
+  .panel-title{flex-wrap:wrap}
+  .panel-title>div{flex:1 1 160px}
+}
+@media(max-width:380px){
+  .account-summary-grid{grid-template-columns:1fr 1fr;gap:8px}
+  .account-summary-card{padding:11px;gap:7px;border-radius:13px}
+  .account-summary-card span{font-size:11px}
+  .account-summary-card strong{font-size:clamp(13px,4.1vw,17px)}
+  .form-grid{gap:11px}
+  .dialog{max-width:calc(100vw - 20px);width:calc(100vw - 20px);padding:15px}
+  .modal-actions{flex-wrap:wrap}
+  .modal-actions .btn{flex:1 1 120px}
+  .calendar-grid,.calendar-weekdays{gap:2px}
+  .calendar-cell{padding:4px;min-width:0}
+}
+@media(min-width:761px) and (max-width:900px){
+  .topbar{padding-left:14px;padding-right:14px;gap:8px}
+  .topbar-left{min-width:0;gap:6px}
+  .topbar .top-indicator{display:none}
+  .top-actions{gap:8px;min-width:0}
+  .top-actions .workspace-toggle{max-width:215px}
+}

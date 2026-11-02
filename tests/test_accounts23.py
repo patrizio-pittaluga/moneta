@@ -3,6 +3,7 @@ These tests are local, require no real AWS credentials, and reuse the same FakeC
 used to verify multiuser operations.
 """
 import datetime as dt
+from decimal import Decimal
 import unittest
 from unittest.mock import patch
 from test_multiuser import mod, FakeTable, FakeClient, request, body, ALICE, MARIO
@@ -46,6 +47,36 @@ class Accounts23Tests(Accounts23Base,unittest.TestCase):
         self.assertEqual(len(x['transfers']),1)
         self.assertEqual(len(body(self.req('GET /state'))['transactions']),2)  # no fake expenses from withdrawal
         self.assertEqual(self.req('POST /transfers',data={'id':'atm-1','fromAccountId':'bank','toAccountId':'cash','amount':100,'date':'2026-10-20'})['statusCode'],409)
+
+    def test_dynamodb_decimal_card_settings_do_not_break_account_summary(self):
+        """Reproduce Lambda Python 3.13: calendar.monthrange rejects Decimal month.
+
+        DynamoDB actually returns Decimal for *all* numeric attributes, unlike
+        the earlier FakeTable tests which kept Python int for put_item().
+        """
+        self.assertEqual(self.create_credit()['statusCode'],201)
+        card=self.db.items[(f'USER#{ALICE}', 'ACCOUNT#cc-my-card')]['value']
+        for name in ('openingCents','closingDay','chargeDay','chargeMonthOffset'):
+            card[name]=Decimal(str(card[name]))
+        self.assertEqual(self.req('POST /transactions',data=self.expense('decimal-cc',80,'cc-my-card'))['statusCode'],201)
+        summary_response=self.req('GET /accounts')
+        self.assertEqual(summary_response['statusCode'],200,summary_response)
+        summary=body(summary_response)
+        self.assertEqual(summary['creditDebt'],80)
+        self.assertEqual(summary['cycles'][0]['dueDate'],'2026-11-10')
+        self.assertEqual(type(next(a for a in summary['accounts'] if a['id']=='cc-my-card')['chargeMonthOffset']),int)
+        # Saving a previously loaded card must also accept valid persisted Decimals.
+        update=self.req('PUT /accounts/{id}',params={'id':'cc-my-card'},data={'name':'Carta aggiornata'})
+        self.assertEqual(update['statusCode'],200,update)
+        self.assertEqual(body(self.req('GET /accounts'))['cycles'][0]['amount'],80)
+
+    def test_credit_cycle_last_day_with_decimal_fields(self):
+        self.assertEqual(self.create_credit(closingDay=31,chargeDay=31)['statusCode'],201)
+        card=self.db.items[(f'USER#{ALICE}', 'ACCOUNT#cc-my-card')]['value']
+        for name in ('closingDay','chargeDay','chargeMonthOffset'):
+            card[name]=Decimal(card[name])
+        self.assertEqual(self.req('POST /transactions',data=self.expense('feb-cc',35,'cc-my-card','2026-02-28'))['statusCode'],201)
+        self.assertEqual(body(self.req('GET /accounts'))['cycles'][0]['dueDate'],'2026-03-31')
 
     def test_credit_expense_updates_liability_not_bank_and_once_settled_reduces_bank(self):
         self.req('PUT /accounts/{id}',params={'id':'bank'},data={'name':'Conto corrente','openingBalance':2000})

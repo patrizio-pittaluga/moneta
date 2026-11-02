@@ -1172,6 +1172,18 @@ def user_accounts(pk):
         if not row.get('SK','').startswith('ACCOUNT#') or not row.get('value'):
             continue
         value = dict(row['value'])
+        # boto3 deserializes DynamoDB Number fields as Decimal, including the
+        # integral calendar parameters saved by the card configuration form.
+        # Normalize at the persistence boundary so all consumers (cycle dates,
+        # editor, balance calculations, scheduler) receive actual integers.
+        for field in ('openingCents', 'closingDay', 'chargeDay', 'chargeMonthOffset'):
+            if field in value:
+                number = value[field]
+                if isinstance(number, bool) or not isinstance(number, (int, Decimal)):
+                    raise BadRequest('Configurazione conto non valida: ' + field)
+                if isinstance(number, Decimal) and (not number.is_finite() or number != number.to_integral_value()):
+                    raise BadRequest('Configurazione conto non valida: ' + field)
+                value[field] = int(number)
         accounts[value['id']] = value
     return accounts
 

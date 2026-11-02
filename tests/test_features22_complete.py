@@ -118,9 +118,14 @@ class CompleteAccountingTests(Fund22Tests):
         self.assertEqual(response['statusCode'],200,response)
         result=body(response)
         self.assertEqual(result['initialLiquidity'],1000)
-        self.assertEqual(result['projection'][0]['available'],700)
+        # Il campione usa gli ultimi tre mesi completi. Non fissare un risultato
+        # assoluto che cambia quando il test viene eseguito un mese dopo.
+        baseline_monthly = result['monthlyIncomeEstimate'] - result['monthlyExpenseEstimate']
+        self.assertAlmostEqual(result['projection'][0]['available'],
+                               1000 + baseline_monthly - 100 - 200, places=2)
         self.assertEqual(result['projection'][-1]['reserved'],600)
-        self.assertEqual(result['projection'][-1]['combined'],800)
+        self.assertAlmostEqual(result['projection'][-1]['combined'],
+                               1000 + baseline_monthly * 6 - 200, places=2)
         self.assertEqual(len(result['projection']),6)
         self.assertTrue(result['warnings'])
         self.assertEqual(request('POST /insights/simulate',data={**scenario,'months':40})['statusCode'],400)
@@ -146,4 +151,4 @@ class UiFullTests(unittest.TestCase):
         tags=re.findall(r'id="([^\"]+)"',html)
         self.assertEqual(len(tags),len(set(tags)))
         self.assertFalse(set(re.findall(r"\$\('([^']+)'\)",js)) - set(tags))
-        self.assertIn('moneta-static-v2.3.0',(root/'frontend/sw.js').read_text())
+        self.assertIn('moneta-static-v2.3.1',(root/'frontend/sw.js').read_text())

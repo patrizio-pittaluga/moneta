@@ -1,3 +1,5 @@
+> **Ultimo hotfix: Moneta 2.3.1** — correzione delle date delle carte salvate in DynamoDB e del layout su smartphone. Leggi `RELEASE_NOTES_2.3.1.md` prima del deploy.
+
 # Moneta 2.2.7 — Security Hardening
 
 Per l’aggiornamento corrente consultare **`RELEASE_NOTES_2.2.7.md`**. La documentazione successiva riporta la cronologia delle funzionalità delle versioni precedenti. Nessun dato viene migrato.
