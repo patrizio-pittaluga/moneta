@@ -156,3 +156,6 @@
   .top-actions{gap:8px;min-width:0}
   .top-actions .workspace-toggle{max-width:215px}
 }
+
+/* Moneta 2.3.2 - home advice & breakdown */
+.home-insights{margin-bottom:18px;border-color:#31574d}.home-insights .insight-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,265px),1fr));gap:12px}.home-insights .insight-advice{margin:0;background:#182b32}.insight-category{padding:11px 0;border-bottom:1px solid var(--stroke)}.insight-category .budget-head{display:flex;gap:9px;justify-content:space-between;flex-wrap:wrap;font-size:12px;margin-bottom:8px}.insight-category .track{height:8px}.upcoming-panel{margin-top:20px}.account-summary-card{min-width:0;overflow-wrap:anywhere}

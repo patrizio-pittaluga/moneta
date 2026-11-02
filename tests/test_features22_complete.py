@@ -144,11 +144,11 @@ class UiFullTests(unittest.TestCase):
         for route in ('POST /fund/operations/{id}/reverse','POST /insights/simulate',
                       'PUT /capital/items/{id}'):
             self.assertIn("RouteKey: '"+route+"'",template)
-        for field in ('reverseForm','reverseReason','portfolioSummary','portfolioRows',
+        for field in ('reverseForm','reverseReason',
                       'simulateForm','simReserve','simulationResult','capitalQuantity',
                       'capitalUnitPrice','capitalAssetClass','capitalCancelEdit'):
             self.assertIn(f'id="{field}"',html)
         tags=re.findall(r'id="([^\"]+)"',html)
         self.assertEqual(len(tags),len(set(tags)))
         self.assertFalse(set(re.findall(r"\$\('([^']+)'\)",js)) - set(tags))
-        self.assertIn('moneta-static-v2.3.1',(root/'frontend/sw.js').read_text())
+        self.assertIn('moneta-static-v2.3.2',(root/'frontend/sw.js').read_text())

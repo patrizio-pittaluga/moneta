@@ -30,7 +30,7 @@ class Accounts23Base:
 class Accounts23Tests(Accounts23Base,unittest.TestCase):
     def test_accounts_are_private_and_initially_zero(self):
         x=self.summary()
-        self.assertEqual({a['id'] for a in x['accounts']},{'bank','cash'})
+        self.assertEqual({a['id'] for a in x['accounts']},{'bank','cash','deposit'})
         self.assertEqual((x['bankBalance'],x['cashBalance'],x['creditDebt']),(0,0,0))
         self.assertEqual(body(self.req('GET /accounts',sub=MARIO))['accounts'],x['accounts'])
         self.assertEqual(self.req('GET /accounts',space='family')['statusCode'],400)
@@ -141,7 +141,7 @@ class Accounts23Tests(Accounts23Base,unittest.TestCase):
         self.create_credit()
         self.req('POST /transactions',data=self.expense('private',100,'cc-my-card'))
         data=body(self.req('GET /accounts',sub=MARIO))
-        self.assertEqual(len(data['accounts']),2)
+        self.assertEqual(len(data['accounts']),3)
         self.assertEqual((data['cashBalance'],data['creditDebt']),(0,0))
 
     def test_card_months_clamp_correctly(self):

@@ -23,8 +23,8 @@ TABLE = boto3.resource('dynamodb').Table(os.environ['TABLE_NAME'])
 CLIENT_ID = os.environ['COGNITO_CLIENT_ID']
 ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,80}$')
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-EXPENSE = frozenset(('Casa', 'Alimentari', 'Trasporti', 'Bollette', 'Salute', 'Svago', 'Shopping', 'Altro'))
-INCOME = frozenset(('Stipendio', 'Extra', 'Rimborsi', 'Altre entrate'))
+EXPENSE = frozenset(('Casa', 'Affitto e mutuo', 'Condominio', 'Alimentari', 'Ristoranti', 'Bar e caffè', 'Bollette', 'Telefonia e Internet', 'Abbonamenti', 'Trasporti', 'Carburante', 'Auto e manutenzione', 'Assicurazioni', 'Salute', 'Farmacia', 'Istruzione', 'Animali domestici', 'Abbigliamento', 'Shopping', 'Tecnologia', 'Svago', 'Viaggi', 'Regali', 'Tasse', 'Spese bancarie', 'Altro'))
+INCOME = frozenset(('Stipendio', 'Bonus e premi', 'Straordinari', 'Lavoro autonomo', 'Affitti percepiti', 'Vendite', 'Regali ricevuti', 'Interessi', 'Dividendi', 'Rimborsi', 'Extra', 'Altre entrate'))
 FREQUENCIES = frozenset(('weekly', 'monthly', 'quarterly', 'yearly'))
 
 class BadRequest(Exception):
@@ -1061,6 +1061,72 @@ def simulate_finances(sub, payload):
 
 
 
+# Moneta 2.3.2: analisi dei consumi, regole trasparenti e nessuna API esterna.
+ESSENTIAL_CATEGORIES = frozenset(('Casa','Affitto e mutuo','Condominio','Alimentari','Bollette',
+    'Telefonia e Internet','Trasporti','Carburante','Auto e manutenzione',
+    'Assicurazioni','Salute','Farmacia','Istruzione','Tasse','Spese bancarie'))
+
+def spending_diagnostics(transactions, today):
+    """Analisi limitata ai tre mesi *completi* e al mese in corso.
+
+    Non considera trasferimenti, storni e righe non effettive. Le stime non
+    includono pagamenti futuri e non interpretano una spesa come risparmio.
+    """
+    first=today.replace(day=1)
+    window=month_offset(first,-3)
+    expenses=[]; income=[]
+    for t in transactions:
+        if not (window.isoformat()<=t.get('date','')<=today.isoformat()):
+            continue
+        if (t.get('affectsBalance',True) is False or t.get('isTransfer') or
+                t.get('isCorrection') or t.get('isReversed')):
+            continue
+        cents_value=int((Decimal(str(t['amount']))*100).to_integral_value())
+        if t['type']=='expense': expenses.append((t['date'],t['category'],cents_value))
+        elif t['type']=='income': income.append((t['date'],cents_value))
+    completed_exp=[(d,c,a) for d,c,a in expenses if d<first.isoformat()]
+    current_exp=[(d,c,a) for d,c,a in expenses if d>=first.isoformat()]
+    completed_income=sum(a for d,a in income if d<first.isoformat())
+    by_category={}
+    for _,category,value in completed_exp:
+        by_category[category]=by_category.get(category,0)+value
+    total=sum(by_category.values())
+    monthly_income=completed_income//3
+    monthly_out=total//3
+    discretionary=sum(a for c,a in by_category.items() if c not in ESSENTIAL_CATEGORIES)
+    months_with_expenses=len({d[:7] for d,_,_ in completed_exp})
+    top=sorted(by_category.items(),key=lambda row:(-row[1],row[0]))[:8]
+    suggestions=[]
+    if months_with_expenses<2 or completed_income<=0:
+        suggestions.append({'type':'info','title':'Completa il quadro delle spese',
+            'description':'Registra almeno due mesi di uscite e le entrate per ottenere confronti affidabili. Non aggiungere movimenti fittizi al tuo conto.'})
+    else:
+        ratio=(monthly_income-monthly_out)/monthly_income*100 if monthly_income else 0
+        if ratio<0:
+            suggestions.append({'type':'warning','title':'Spendi più di quanto incassi',
+                'description':f'Negli ultimi tre mesi completi: entrate medie {monthly_income/100:.2f} €/mese, spese {monthly_out/100:.2f} €/mese. Differenza {((monthly_income-monthly_out)/100):.2f} €/mese. Parti dalle categorie più pesanti.'})
+        elif ratio<10:
+            suggestions.append({'type':'warning','title':'Margine di risparmio ridotto',
+                'description':f'Risparmio stimato {ratio:.1f}% delle entrate medie degli ultimi tre mesi completi. Una prima soglia da monitorare può essere il 10%, se compatibile con le spese essenziali.'})
+        if discretionary:
+            target=(discretionary//3)*15//100
+            suggestions.append({'type':'info','title':'Prova un taglio del 15% alle spese flessibili',
+                'description':f'Le categorie non essenziali pesano {discretionary/300:.2f} €/mese in media. Una riduzione del 15% libererebbe circa {target/100:.2f} €/mese, se realmente sostenibile.'})
+        if top:
+            biggest,big_cents=top[0]
+            suggestions.append({'type':'info','title':'La categoria più costosa: '+biggest,
+                'description':f'Negli ultimi tre mesi hai registrato {big_cents/100:.2f} € in {biggest} ({big_cents*100/total:.0f}% delle spese). Apri i movimenti di questa categoria e verifica le operazioni ripetute.'})
+    return {'monthsWithExpenses':months_with_expenses,'monthlyIncome':monthly_income/100,
+        'monthlyExpenses':monthly_out/100,'monthlySavings':(monthly_income-monthly_out)/100,
+        'savingsRatePercent':round((monthly_income-monthly_out)*100/monthly_income,1) if monthly_income else None,
+        'currentMonthExpenses':sum(a for _,_,a in current_exp)/100,
+        'monthlyDiscretionary':round(discretionary/300,2),
+        'categories':[{'name':cat,'total':value/100,'monthlyAverage':round(value/300,2),
+                      'percentage':round(value*100/total,1),'essential':cat in ESSENTIAL_CATEGORIES}
+                      for cat,value in top],
+        'suggestions':suggestions,
+        'periodStart':window.isoformat(),'periodEnd':(first-dt.timedelta(days=1)).isoformat()}
+
 def private_insights(sub):
     pk=user_key(sub)
     state=state_for(pk)
@@ -1084,7 +1150,7 @@ def private_insights(sub):
         spent=sum(round(Decimal(str(t['amount']))*100) for t in group if t['type']=='expense')
         monthly.append({'month':begin.strftime('%Y-%m'),'income':income/100,'expenses':spent/100,
                         'saved':(income-spent)/100})
-    essentials = {'Casa','Alimentari','Bollette','Trasporti','Salute'}
+    essentials = ESSENTIAL_CATEGORIES
     expense_sample=[round(Decimal(str(t['amount']))*100) for t in relevant
                    if t['type']=='expense' and t.get('affectsBalance',True)
                    and not t.get('isTransfer',False) and not t.get('isCorrection',False)
@@ -1102,6 +1168,7 @@ def private_insights(sub):
     elif coverage is not None:
         notices.append({'type':'info','title':'Copertura delle spese essenziali',
                         'description':f'Liquidità registrata: circa {coverage} mesi al ritmo medio recente. Non è una garanzia futura.'})
+    # Solo compatibilità API: nessuna scheda investimenti nella nuova interfaccia.
     portfolio=[]
     invested=totals['investment']
     for item in assets:
@@ -1113,12 +1180,6 @@ def private_insights(sub):
                           'weightPercent':round(share,1),'asOf':item['asOf'],
                           'daysSinceValuation':age,'unrealizedGain':item.get('unrealizedGain'),
                           'gainPct':item.get('gainPct'),'assetClass':item.get('assetClass','other')})
-        if share>40 and len([a for a in assets if a['kind']=='investment'])>1:
-            notices.append({'type':'info','title':'Concentrazione del portafoglio',
-                            'description':f"{item['name']} pesa circa il {share:.1f}% degli investimenti registrati. Valuta il rischio di concentrazione."})
-        if age>30:
-            notices.append({'type':'info','title':'Valutazione da aggiornare',
-                            'description':f"{item['name']}: ultimo aggiornamento {age} giorni fa."})
     # Suggerimenti sul budget: soglie verificabili rispetto al mese completo precedente.
     previous=first.isoformat()
     last_end=month_offset(first,1).isoformat()
@@ -1137,14 +1198,13 @@ def private_insights(sub):
         elif out >= limit*8//10:
             notices.append({'type':'info','title':'Budget vicino al limite · '+category,
                             'description':f"Nel mese scorso hai utilizzato circa {out/limit*100:.0f}% del budget."})
-    if totals['investment']:
-        notices.append({'type':'info','title':'Valori degli investimenti',
-                        'description':'Le valutazioni sono manuali e potrebbero non riflettere i prezzi di mercato.'})
+    spending_analysis=spending_diagnostics(relevant, today)
+    notices=spending_analysis['suggestions']+notices
     return {'liquidity':liquid/100,'netWorth':net/100,'assets':assets,
             'totals':{k:v/100 for k,v in totals.items()},
-            'lastThreeMonths':monthly,'essentialAverage':essential_avg/100,
+            'lastThreeMonths':monthly,'spending':spending_analysis,'essentialAverage':essential_avg/100,
             'coverageMonths':coverage,'notices':notices,'portfolio':portfolio,
-            'assumptions':['La liquidità netta include banca, contanti e debiti delle carte a saldo.',
+            'assumptions':['La liquidità netta include banca, contanti, conto deposito e debiti delle carte a saldo.',
                 'Non duplicare gli importi del nuovo registro Contanti negli asset di liquidità esterni.',
                 'Nessuna quota del fondo condiviso è attribuita automaticamente al patrimonio personale.',
                 'Versamenti e rimborsi tracciati non sono reddito o spesa nei consigli.']}
@@ -1152,7 +1212,7 @@ def private_insights(sub):
 
 
 # --- Moneta 2.3: conti, contanti, carte a saldo differito ---
-DEFAULT_ACCOUNT_IDS = frozenset(('bank','cash'))
+DEFAULT_ACCOUNT_IDS = frozenset(('bank','cash','deposit'))
 ACCOUNT_LIMIT = 8
 
 def account_id(value):
@@ -1167,6 +1227,7 @@ def user_accounts(pk):
     accounts = {
         'bank':{'id':'bank','name':'Conto corrente','kind':'bank','openingCents':0},
         'cash':{'id':'cash','name':'Contanti','kind':'cash','openingCents':0},
+        'deposit':{'id':'deposit','name':'Conto deposito','kind':'deposit','openingCents':0},
     }
     for row in list_prefix(pk,'ACCOUNT#'):
         if not row.get('SK','').startswith('ACCOUNT#') or not row.get('value'):
@@ -1191,6 +1252,8 @@ def account_for(pk, ident, expense=False):
     account = user_accounts(pk).get(account_id(ident))
     if not account or account.get('inactive'):
         raise BadRequest('Conto inesistente o disattivato')
+    if account['kind']=='deposit':
+        raise BadRequest('Il conto deposito ammette solo trasferimenti e saldo iniziale')
     if account['kind']=='credit' and not expense:
         raise BadRequest('Le entrate non possono essere accreditate su carta a saldo')
     return account
@@ -1203,7 +1266,7 @@ def account_record(payload, ident=None, previous=None):
         kind = 'credit'
     else:
         kind = (previous or {}).get('kind')
-        if kind not in ('bank','cash','credit'):
+        if kind not in ('bank','cash','deposit','credit'):
             raise BadRequest('Tipo conto non valido')
     name = payload.get('name', (previous or {}).get('name',''))
     if not isinstance(name,str) or not 2 <= len(name.strip()) <= 60:
@@ -1338,11 +1401,12 @@ def accounts_state(pk):
     transfers=[{**r['value'],'amount':r['value']['amountCents']/100,
                 'reversed':r['value']['id'] in reversed_transfers} for r in rows if r['SK'].startswith('XFER#')]
     transfers.sort(key=lambda t:(t['date'],t['id']),reverse=True)
-    bank=balances.get('bank',0);cash=balances.get('cash',0)
+    bank=balances.get('bank',0);cash=balances.get('cash',0);deposit=balances.get('deposit',0)
     debt=sum(-balances[k] for k,v in accounts.items() if v['kind']=='credit')
     return {'accounts':result,'cycles':cycles[:150],'transfers':transfers[:100],
-            'bankBalance':bank/100,'cashBalance':cash/100,'creditDebt':debt/100,
-            'available':(bank+cash)/100,'netLiquidity':(bank+cash-debt)/100}
+            'bankBalance':bank/100,'cashBalance':cash/100,'depositBalance':deposit/100,
+            'creditDebt':debt/100,'spendable':(bank+cash)/100,
+            'available':(bank+cash+deposit)/100,'netLiquidity':(bank+cash+deposit-debt)/100}
 
 def settle_card(pk,card_id,cycle,paid_date,automated=False):
     card=account_for(pk,card_id,expense=True)
@@ -1486,8 +1550,8 @@ def handle_request(event, claims, sub, pk, route, params):
         to_id=account_id(data.get('toAccountId'))
         if from_id==to_id:raise BadRequest('Origine e destinazione non possono coincidere')
         acc=user_accounts(pk)
-        if any(x not in acc or acc[x]['kind'] not in ('bank','cash') for x in (from_id,to_id)):
-            raise BadRequest('Trasferimenti consentiti solo fra conto corrente e contanti')
+        if any(x not in acc or acc[x]['kind'] not in ('bank','cash','deposit') for x in (from_id,to_id)):
+            raise BadRequest('Trasferimenti consentiti solo fra conto corrente, contanti e deposito')
         amount=cents(data.get('amount'))
         note=data.get('note','')
         if not isinstance(note,str) or len(note)>200:raise BadRequest('Nota non valida')

@@ -14,7 +14,7 @@ class OnboardingTests(unittest.TestCase):
   self.assertIn('markTourSeen()',js)
   self.assertIn('claims.sub',js)
  def test_cache_bumped(self):
-  self.assertIn('moneta-static-v2.3.1',(P/'sw.js').read_text())
+  self.assertIn('moneta-static-v2.3.2',(P/'sw.js').read_text())
 
  def test_interactive_spotlight(self):
   h=(P/'index.html').read_text();js=(P/'app.js').read_text();css=(P/'styles.css').read_text()
