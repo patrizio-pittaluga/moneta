@@ -592,8 +592,8 @@ Resources:
       StageName: '$default'
       AutoDeploy: true
       DefaultRouteSettings:
-        ThrottlingBurstLimit: 5
-        ThrottlingRateLimit: 2
+        ThrottlingBurstLimit: 15
+        ThrottlingRateLimit: 8
 
   ApiLambdaPermission:
     Type: AWS::Lambda::Permission

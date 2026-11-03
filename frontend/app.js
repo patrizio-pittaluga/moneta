@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-const CATS=["Casa", "Affitto e mutuo", "Condominio", "Alimentari", "Ristoranti", "Bar e caffè", "Bollette", "Telefonia e Internet", "Abbonamenti", "Trasporti", "Carburante", "Auto e manutenzione", "Assicurazioni", "Salute", "Farmacia", "Istruzione", "Animali domestici", "Abbigliamento", "Shopping", "Tecnologia", "Svago", "Viaggi", "Regali", "Tasse", "Spese bancarie", "Altro"];
+const CATS=["Casa", "Affitto e mutuo", "Condominio", "Alimentari", "Ristoranti", "Bar e caffè", "Bollette", "Telefonia e Internet", "Abbonamenti", "Trasporti", "Carburante", "Auto e manutenzione", "Assicurazioni", "Salute", "Farmacia", "Istruzione", "Animali domestici", "Abbigliamento", "Shopping", "Tecnologia", "Svago", "Calcetto", "Viaggi", "Regali", "Tasse", "Spese bancarie", "Altro"];
 const INCOME=["Stipendio", "Bonus e premi", "Straordinari", "Lavoro autonomo", "Affitti percepiti", "Vendite", "Regali ricevuti", "Interessi", "Dividendi", "Rimborsi", "Extra", "Altre entrate"];
 const DEFAULT_BUDGETS={Casa:700,Alimentari:400,Trasporti:180,Bollette:220,Salute:100,Svago:160,Shopping:140,Altro:100};
 const $=id=>document.getElementById(id);
@@ -46,6 +46,7 @@ const localDay=()=>{const d=new Date();return `${d.getFullYear()}-${String(d.get
 const monthKey=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
 const dateName=s=>new Date(s+'T12:00:00').toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'});
 let fundData=null,fundMembers=[],insightsData=null,reverseOperationId=null,capitalEditId=null;
+let insightsDirty=true,insightsVersion=0,insightsRequest=null;
 let accountsData=null,cardEditId=null;
 let config,token=null,state={transactions:[],budgets:{},recurring:[],planned:[]},favorites=[],calendarMonth=new Date(),calendarDate='',editPlanId=null,completePlanId=null,costs=null,month=new Date(),view='home',editId=null,editRecId=null,busy=false,me=null,activeSpace='',members=[];
 function isCreditPaid(t){
@@ -63,9 +64,34 @@ const callbackUrl=()=>location.origin+'/';
 async function login(){const verifier=base64url(crypto.getRandomValues(new Uint8Array(32)));const digest=new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier)));const nonce=base64url(crypto.getRandomValues(new Uint8Array(24)));sessionStorage.setItem('moneta-pkce',verifier);sessionStorage.setItem('moneta-state',nonce);const q=new URLSearchParams({response_type:'code',client_id:config.clientId,redirect_uri:callbackUrl(),scope:'openid email',state:nonce,code_challenge:base64url(digest),code_challenge_method:'S256'});location.assign(config.cognitoUrl+'/oauth2/authorize?'+q);}
 async function handleCallback(){const q=new URLSearchParams(location.search);if(q.has('error'))throw Error('Cognito: '+(q.get('error_description')||q.get('error')));if(!q.has('code'))return;const verifier=sessionStorage.getItem('moneta-pkce');const saved=sessionStorage.getItem('moneta-state');sessionStorage.removeItem('moneta-pkce');sessionStorage.removeItem('moneta-state');const code=q.get('code');const valid=Boolean(verifier&&saved&&saved===q.get('state'));history.replaceState({},'',location.pathname);if(!valid)throw Error('Stato di autenticazione non valido.');const body=new URLSearchParams({grant_type:'authorization_code',client_id:config.clientId,code,code_verifier:verifier,redirect_uri:callbackUrl()});const r=await fetch(config.cognitoUrl+'/oauth2/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const data=await r.json();if(!r.ok||!data.access_token)throw Error('Login fallito: '+(data.error||r.status));token=data.access_token;sessionStorage.setItem('moneta-token',token);}
 function logout(){sessionStorage.removeItem('moneta-token');token=null;location.assign(config.cognitoUrl+'/logout?'+new URLSearchParams({client_id:config.clientId,logout_uri:callbackUrl()}));}
-async function api(path,method='GET',obj){if(!token||jwtExpired(token)){sessionStorage.removeItem('moneta-token');throw Error('Sessione scaduta. Effettua nuovamente il login.');}const r=await fetch(config.apiUrl+scopedPath(path),{method,headers:{Authorization:'Bearer '+token,...(obj===undefined?{}:{'Content-Type':'application/json'})},body:obj===undefined?undefined:JSON.stringify(obj),cache:'no-store'});if(r.status===204)return null;const data=await r.json().catch(()=>({}));if(!r.ok)throw Error(data.error||'Errore API '+r.status);return data;}
-async function reload(){clearError();const scope=activeSpace;try{const [data,favs,accounts]=await Promise.all([api('/state'),api('/favorites'),activeSpace?Promise.resolve(null):api('/accounts')]);if(scope!==activeSpace)return;accountsData=accounts;state={transactions:Array.isArray(data.transactions)?data.transactions:[],budgets:{...DEFAULT_BUDGETS,...data.budgets},recurring:Array.isArray(data.recurring)?data.recurring:[],planned:Array.isArray(data.planned)?data.planned:[]};favorites=Array.isArray(favs.favorites)?favs.favorites:[];render();if(view==='fund'&&activeSpace)await loadFund();if(!activeSpace)await loadInsights();else renderHomeInsights(null);if(view==='accounts'&&!activeSpace)renderAccounts();}catch(e){error(e.message);}}
-function navigate(target){if(target==='recurring')target='calendar';if(target==='accounts'&&activeSpace){error('I conti appartengono al bilancio personale.');target='home';}if(target==='fund'&&!activeSpace){error('Per il Fondo comune seleziona prima un bilancio condiviso.');target='spaces';}if(target==='insights'&&activeSpace){error('Per gli Insights personali seleziona Il mio bilancio.');target='home';}if(['costs','users'].includes(target)&&!me?.isAdmin){error('Accesso ai costi AWS riservato agli amministratori');return;}view=target;document.querySelectorAll('.view').forEach(el=>el.classList.toggle('hidden',el.id!=='view-'+target));document.querySelectorAll('.nav-btn').forEach(el=>el.classList.toggle('active',el.dataset.view===target));$('topSection').textContent={home:'Panoramica',accounts:'I miei conti',movements:'Movimenti',recurring:'Ricorrenze',costs:'Costi AWS',users:'Gestione utenti',spaces:'Bilanci condivisi',settings:'Budget e dati',calendar:'Scadenze e ricorrenze',fund:'Fondo comune',insights:'Moneta Insights'}[target];window.scrollTo({top:0});if(target==='costs'&&costs)renderCosts();if(target==='users')loadUsers();if(target==='spaces')renderSpaces();if(target==='calendar')renderCalendar();if(target==='fund')loadFund();if(target==='accounts')renderAccounts();if(target==='insights')loadInsights();if($('mobileMoreMenu'))$('mobileMoreMenu').classList.add('hidden');document.querySelectorAll('[data-mobile-view]').forEach(el=>el.classList.toggle('active',el.dataset.mobileView===target));}
+// Solo letture e aggiornamenti idempotenti possono essere ritentati automaticamente.
+// Non ripetere POST di movimenti, rimborsi o trasferimenti: potrebbero creare duplicati.
+async function api(path,method='GET',obj){
+ if(!token||jwtExpired(token)){sessionStorage.removeItem('moneta-token');throw Error('Sessione scaduta. Effettua nuovamente il login.');}
+ const url=config.apiUrl+scopedPath(path);
+ const opts={method,headers:{Authorization:'Bearer '+token,...(obj===undefined?{}:{'Content-Type':'application/json'})},body:obj===undefined?undefined:JSON.stringify(obj),cache:'no-store'};
+ const retryable=method==='GET'||method==='PUT';
+ for(let attempt=0;attempt<3;attempt++){
+  const r=await fetch(url,opts);
+  if(r.status===429&&retryable&&attempt<2){
+   const retryAfter=Number(r.headers?.get?.('Retry-After'));
+   const wait=Number.isFinite(retryAfter)&&retryAfter>0?Math.min(2500,retryAfter*1000):(350*(2**attempt)+Math.floor(Math.random()*160));
+   await new Promise(resolve=>setTimeout(resolve,wait));
+   continue;
+  }
+  if(r.status===204)return null;
+  const data=await r.json().catch(()=>({}));
+  if(!r.ok){
+   if(r.status===429)throw Error('Troppe richieste contemporanee (429). Attendi qualche secondo e aggiorna; verifica il movimento prima di reinserirlo.');
+   throw Error(data.error||'Errore API '+r.status);
+  }
+  return data;
+ }
+}
+// Il refresh completo serve al login, al cambio di bilancio e al pulsante Aggiorna.
+// Le normali modifiche usano invece la risposta della scrittura (vedi applyTransactionChange).
+async function reload(){clearError();const scope=activeSpace;try{const [data,favs,accounts]=await Promise.all([api('/state'),api('/favorites'),activeSpace?Promise.resolve(null):api('/accounts')]);if(scope!==activeSpace)return true;accountsData=accounts;state={transactions:Array.isArray(data.transactions)?data.transactions:[],budgets:{...DEFAULT_BUDGETS,...data.budgets},recurring:Array.isArray(data.recurring)?data.recurring:[],planned:Array.isArray(data.planned)?data.planned:[]};favorites=Array.isArray(favs.favorites)?favs.favorites:[];invalidateInsights();render();if(view==='fund'&&activeSpace)await loadFund();if(!activeSpace&&['home','insights'].includes(view))await loadInsights();if(view==='accounts'&&!activeSpace)renderAccounts();return true;}catch(e){error(e.message);return false;}}
+function navigate(target){if(target==='recurring')target='calendar';if(target==='accounts'&&activeSpace){error('I conti appartengono al bilancio personale.');target='home';}if(target==='fund'&&!activeSpace){error('Per il Fondo comune seleziona prima un bilancio condiviso.');target='spaces';}if(target==='insights'&&activeSpace){error('Per gli Insights personali seleziona Il mio bilancio.');target='home';}if(['costs','users'].includes(target)&&!me?.isAdmin){error('Accesso ai costi AWS riservato agli amministratori');return;}view=target;document.querySelectorAll('.view').forEach(el=>el.classList.toggle('hidden',el.id!=='view-'+target));document.querySelectorAll('.nav-btn').forEach(el=>el.classList.toggle('active',el.dataset.view===target));$('topSection').textContent={home:'Panoramica',accounts:'I miei conti',movements:'Movimenti',recurring:'Ricorrenze',costs:'Costi AWS',users:'Gestione utenti',spaces:'Bilanci condivisi',settings:'Budget e dati',calendar:'Scadenze e ricorrenze',fund:'Fondo comune',insights:'Moneta Insights'}[target];window.scrollTo({top:0});if(target==='costs'&&costs)renderCosts();if(target==='users')loadUsers();if(target==='spaces')renderSpaces();if(target==='calendar')renderCalendar();if(target==='fund')loadFund();if(target==='accounts')renderAccounts();if(['home','insights'].includes(target)&&!activeSpace)loadInsights();if($('mobileMoreMenu'))$('mobileMoreMenu').classList.add('hidden');document.querySelectorAll('[data-mobile-view]').forEach(el=>el.classList.toggle('active',el.dataset.mobileView===target));}
 const sum=(list,type)=>list.filter(t=>t.type===type&&!t.isTransfer&&!t.isCorrection&&!t.isReversed&&(activeSpace||t.affectsBalance!==false)).reduce((a,x)=>a+Math.round(Number(x.amount)*100),0)/100;
 function balance(list){return Math.round(list.reduce((acc,t)=>acc+(t.affectsBalance===false?0:(t.type==='income'?1:-1)*Math.round(Number(t.amount)*100)),0))/100;}
 const txSort=(a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id);
@@ -82,7 +108,7 @@ function chartSvg(series,labels,{colors=['#55e8bb'],currency='EUR',includeZero=f
  const paths=series.map((s,j)=>{const pts=s.map((v,i)=>`${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');const circles=s.map((v,i)=>`<circle cx="${x(i)}" cy="${y(v)}" r="3.4" fill="${colors[j%colors.length]}"><title>${html(labels[i])}: ${html(fmt(v))}</title></circle>`).join('');return `<polyline points="${pts}" fill="none" stroke="${colors[j%colors.length]}" stroke-width="3.0" stroke-linejoin="round" stroke-linecap="round"/>${circles}`;}).join('');
  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Grafico a linee"><g>${grid}<line class="chart-zero" x1="${L}" y1="${y(0)}" x2="${W-R}" y2="${y(0)}"/></g>${paths}${labels.map((name,i)=>`<text x="${x(i)}" y="${H-13}" text-anchor="middle">${html(name)}</text>`).join('')}</svg>`;
 }
-function render(){$('addButton').classList.toggle('hidden',!canWrite());$('addMovementButton').classList.toggle('hidden',!canWrite());$('addRecurringButton').classList.toggle('hidden',!canWrite());const today=localDay(),valid=state.transactions.filter(t=>t.date<=today),monthNow=today.slice(0,7),m=valid.filter(t=>t.date.startsWith(monthNow));displayBalance('totalBalance',!activeSpace&&accountsData?accountsData.available:balance(valid));displayPrivateValue('netLiquidity',!activeSpace&&accountsData?accountsData.netLiquidity:balance(valid));const showPersonalAccounts=!activeSpace&&!!accountsData;$('homeAccountBreakdown').classList.toggle('hidden',!showPersonalAccounts);if(showPersonalAccounts){displayPrivateValue('homeBankBalance',accountsData.bankBalance);displayPrivateValue('homeCashBalance',accountsData.cashBalance);}$('totalMovements').textContent=`${valid.length} movimenti`;$('incomeTotal').textContent=money(sum(m,'income'));$('expenseTotal').textContent=money(sum(m,'expense'));$('balanceTotal').textContent=money(balance(m));$('incomeMonth').textContent=$('expenseMonth').textContent=new Date().toLocaleDateString('it-IT',{month:'long',year:'numeric'});$('recentRows').innerHTML=table([...state.transactions].sort(txSort).slice(0,7));
+function render(){$('addButton').classList.toggle('hidden',!canWrite());$('addMovementButton').classList.toggle('hidden',!canWrite());$('addRecurringButton').classList.toggle('hidden',!canWrite());const today=localDay(),valid=state.transactions.filter(t=>t.date<=today),monthNow=today.slice(0,7),m=valid.filter(t=>t.date.startsWith(monthNow));displayBalance('totalBalance',!activeSpace&&accountsData?accountsData.spendable:balance(valid));displayPrivateValue('netLiquidity',!activeSpace&&accountsData?(accountsData.spendable-accountsData.creditDebt):balance(valid));const showPersonalAccounts=!activeSpace&&!!accountsData;$('homeAccountBreakdown').classList.toggle('hidden',!showPersonalAccounts);if(showPersonalAccounts){displayPrivateValue('homeBankBalance',accountsData.bankBalance);displayPrivateValue('homeCashBalance',accountsData.cashBalance);}$('totalMovements').textContent=`${valid.length} movimenti`;$('incomeTotal').textContent=money(sum(m,'income'));$('expenseTotal').textContent=money(sum(m,'expense'));$('balanceTotal').textContent=money(balance(m));$('incomeMonth').textContent=$('expenseMonth').textContent=new Date().toLocaleDateString('it-IT',{month:'long',year:'numeric'});$('recentRows').innerHTML=table([...state.transactions].sort(txSort).slice(0,7));
  const months=Array.from({length:6},(_,i)=>new Date(new Date().getFullYear(),new Date().getMonth()-5+i,1));const labels=months.map(d=>d.toLocaleDateString('it-IT',{month:'short'}));const inc=[],out=[],balances=[];
  months.forEach((d,i)=>{const key=monthKey(d),dateEnd=i===5?today:new Date(d.getFullYear(),d.getMonth()+1,0).toLocaleDateString('en-CA');const rows=valid.filter(t=>t.date.startsWith(key));inc.push(sum(rows,'income'));out.push(sum(rows,'expense'));const last=i===5?today:`${key}-${String(new Date(d.getFullYear(),d.getMonth()+1,0).getDate()).padStart(2,'0')}`;balances.push(balance(valid.filter(t=>t.date<=last)));});
  $('balanceChart').innerHTML=chartSvg([balances],labels,{colors:['#72e6d6']});$('flowChart').innerHTML=chartSvg([inc,out],labels,{colors:['#55e8bb','#ff8d9e'],includeZero:true});
@@ -95,7 +121,97 @@ function renderCosts(){if(!costs)return;$('awsBudget').textContent=usd(costs.bud
 function categories(type,target){const selected=$(target).value;$(target).innerHTML=(type==='income'?INCOME:CATS).map(x=>`<option value="${html(x)}">${html(x)}</option>`).join('');if([...$(target).options].some(opt=>opt.value===selected))$(target).value=selected;}
 function editTransaction(id=null){editId=id;const t=state.transactions.find(t=>t.id===id);$('txForm').reset();$('dialogTitle').textContent=t?'Modifica movimento':'Nuovo movimento';$('txType').value=t?.type||'expense';categories($('txType').value,'txCategory');$('txDescription').value=t?.description||'';$('txAmount').value=t?.amount??'';$('txDate').value=t?.date||localDay();$('txCategory').value=t?.category||($('txType').value==='income'?INCOME[0]:CATS[0]);$('txNote').value=t?.note||'';$('txFundingWrap').classList.toggle('hidden',!activeSpace);$('txAccountWrap').classList.toggle('hidden',!!activeSpace);fillPaymentAccounts('txAccount',t?.accountId||'bank',$('txType').value);$('txFunding').value=t?.paymentSource||'fund';$('txRepeatBox').classList.toggle('hidden',!!t);$('txRepeat').checked=false;$('txRepeatFields').classList.add('hidden');$('txInterval').value=1;$('txEnd').value='';$('txDialog').showModal();}
 function editRecurring(id=null){editRecId=id;const r=state.recurring.find(r=>r.id===id);$('recForm').reset();$('recDialogTitle').textContent=r?'Modifica ricorrenza':'Nuova ricorrenza';$('recType').value=r?.type||'expense';categories($('recType').value,'recCategory');$('recDescription').value=r?.description||'';$('recAmount').value=r?.amount??'';$('recStart').value=r?.startDate||localDay();$('recCategory').value=r?.category||CATS[0];$('recFrequency').value=r?.frequency||'monthly';$('recInterval').value=r?.interval??1;$('recEnd').value=r?.endDate||'';$('recNote').value=r?.note||'';$('recActive').checked=r?.active??true;$('recFundingWrap').classList.toggle('hidden',!activeSpace);$('recAccountWrap').classList.toggle('hidden',!!activeSpace);fillPaymentAccounts('recAccount',r?.accountId||'bank',$('recType').value);$('recFunding').value=r?.paymentSource||'fund';$('recDialog').showModal();}
-async function mutate(work){if(busy)return;busy=true;clearError();try{await work();await reload();}catch(e){error(e.message);}finally{busy=false;}}
+// Le operazioni complesse mantengono il refresh completo, per prudenza contabile.
+async function mutate(work){if(busy)return;busy=true;clearError();try{await work();if(!await reload())error('Operazione salvata, ma l’aggiornamento della schermata non è riuscito. Attendi e premi Aggiorna; non registrare due volte il movimento.');}catch(e){error(e.message);}finally{busy=false;}}
+// In una correzione di sola categoria/descrizione NON cambia nessun saldo.
+// Una modifica di importo, data, conto o tipo richiede invece il saldo autorevole dal backend.
+function transactionAffectsAccounts(before,after){
+ if(!before||!after)return true;
+ return ['type','amount','date','accountId','paymentSource','affectsBalance'].some(k=>String(before[k]??'')!==String(after[k]??''));
+}
+function upsertLocalRecord(rows,record){
+ if(!record||typeof record.id!=='string'||!record.id)throw Error('Risposta incompleta dal backend');
+ const at=rows.findIndex(t=>t.id===record.id);
+ return at<0?[...rows,record]:rows.map((t,i)=>i===at?record:t);
+}
+async function applyTransactionChange(record,{previous=null,deletedId=null,scope=activeSpace}={}){
+ if(scope!==activeSpace)return; // Il cambio bilancio ha già avviato un caricamento autonomo.
+ if(!deletedId&&(!record||typeof record.id!=='string'))throw Error('Risposta incompleta: aggiorna la pagina');
+ // Prima di mostrare i nuovi saldi, recupera il calcolo effettuato da DynamoDB.
+ if(!activeSpace&&(deletedId||transactionAffectsAccounts(previous,record))){
+  const data=await api('/accounts');
+  if(scope!==activeSpace)return;
+  accountsData=data;
+ }
+ if(deletedId)state.transactions=state.transactions.filter(t=>t.id!==deletedId);
+ else state.transactions=upsertLocalRecord(state.transactions,record);
+ invalidateInsights();render();
+ if(view==='fund'&&activeSpace)await loadFund();
+ if(['home','insights'].includes(view)&&!activeSpace)await loadInsights();
+}
+// Salvataggio server confermato prima di modificare la UI: nessun saldo ottimistico.
+async function mutateTransaction(work,options={}){
+ if(busy)return;busy=true;clearError();let saved=false;const scope=activeSpace;
+ try{const record=await work();saved=true;await applyTransactionChange(record,{...options,scope});}
+ catch(e){error(saved?'Movimento salvato, ma la sincronizzazione non è riuscita: premi Aggiorna prima di procedere. '+e.message:e.message);}
+ finally{busy=false;}
+}
+// I trasferimenti e gli addebiti carta modificano soltanto i conti, non lo storico spese.
+async function mutateAccounts(work){
+ if(busy)return;busy=true;clearError();const scope=activeSpace;let saved=false;
+ try{
+  await work();saved=true;
+  const summary=await api('/accounts');
+  if(scope!==activeSpace)return;
+  accountsData=summary;invalidateInsights();render();renderAccounts();
+  if(['home','insights'].includes(view))await loadInsights();
+ }catch(e){error(saved?'Operazione eseguita, ma i saldi non sono sincronizzati: premi Aggiorna prima di ripeterla. '+e.message:e.message);}
+ finally{busy=false;}
+}
+async function mutatePlanned(work,{deletedId=null}={}){
+ if(busy)return;busy=true;clearError();const scope=activeSpace;let saved=false;
+ try{const record=await work();saved=true;if(scope!==activeSpace)return;
+  if(deletedId)state.planned=state.planned.filter(p=>p.id!==deletedId);
+  else state.planned=upsertLocalRecord(state.planned,record);
+  render();
+ }catch(e){error(saved?'Scadenza salvata, ma la schermata non è sincronizzata: premi Aggiorna. '+e.message:e.message);}
+ finally{busy=false;}
+}
+async function mutateBudget(category,amount){
+ if(busy)return;busy=true;clearError();let saved=false;const scope=activeSpace;
+ try{const result=await api('/budgets/'+encodeURIComponent(category),'PUT',{amount});saved=true;
+  if(scope===activeSpace){state.budgets[result.category]=result.amount;invalidateInsights();render();if(['home','insights'].includes(view)&&!activeSpace)await loadInsights();}
+ }catch(e){error(saved?'Budget salvato, ma l’aggiornamento non è riuscito: premi Aggiorna.':e.message);}finally{busy=false;}
+}
+async function mutateRecurring(work,{deletedId=null,firstOccurrence=false}={}){
+ if(busy)return;busy=true;clearError();const scope=activeSpace;let saved=false;
+ try{const record=await work();saved=true;await applyRecurringChange(record,{deletedId,firstOccurrence,scope});}
+ catch(e){error(saved?'Ricorrenza salvata, ma la schermata non è aggiornata: premi Aggiorna. '+e.message:e.message);}
+ finally{busy=false;}
+}
+async function mutateFavorite(work,{deletedId=null}={}){
+ if(busy)return;busy=true;clearError();const scope=activeSpace;let saved=false;
+ try{const record=await work();saved=true;if(scope===activeSpace){
+  if(deletedId)favorites=favorites.filter(f=>f.id!==deletedId);
+  else favorites=upsertLocalRecord(favorites,record);
+  renderFavorites();
+ }}catch(e){error(saved?'Preferito salvato, ma la schermata non è stata aggiornata: premi Aggiorna.':e.message);}finally{busy=false;}
+}
+async function applyRecurringChange(record,{deletedId=null,firstOccurrence=false,scope=activeSpace}={}){
+ if(scope!==activeSpace)return;
+ if(deletedId)state.recurring=state.recurring.filter(r=>r.id!==deletedId);
+ else state.recurring=upsertLocalRecord(state.recurring,record);
+ if(firstOccurrence){ // Il backend crea atomicamente regola e prima spesa: leggiamo la verità server.
+  const [data,accounts]=await Promise.all([api('/state'),activeSpace?Promise.resolve(null):api('/accounts')]);
+  if(scope!==activeSpace)return;
+  state={transactions:data.transactions||[],budgets:{...DEFAULT_BUDGETS,...data.budgets},recurring:data.recurring||[],planned:data.planned||[]};
+  if(!activeSpace)accountsData=accounts;
+  invalidateInsights();
+ }
+ render();
+ if(firstOccurrence&&['home','insights'].includes(view)&&!activeSpace)await loadInsights();
+}
+
 function download(name,text,type){const url=URL.createObjectURL(new Blob([text],{type})),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),3000);}
 function exportCsv(){const safe=s=>{const val=String(s??'');return '"'+(/^[\s]*[=+@-]/.test(val)?"'"+val:val).replace(/"/g,'""')+'"';};const rows=[['Data','Tipo','Descrizione','Categoria','Importo EUR','Note'],...state.transactions.map(t=>[t.date,t.type,t.description,t.category,t.amount,t.note])];download('moneta-movimenti.csv',rows.map(r=>r.map(safe).join(';')).join('\r\n'),'text/csv;charset=utf-8');}
 
@@ -128,18 +244,18 @@ async function confirmCardSettlement(cardId,cycle){
  const item=accountsData?.cycles?.find(x=>x.cardId===cardId&&x.cycle===cycle);
  if(!item||item.status==='paid'||item.closingDate>localDay())return;
  if(!confirm('Confermi che '+money(item.amount)+' sono già stati addebitati dalla banca? Il conto corrente diminuirà di questo importo, senza nuova spesa.'))return;
- await mutate(async()=>{await api('/cards/'+encodeURIComponent(cardId)+'/cycles/'+encodeURIComponent(cycle)+'/settle','POST',{paidDate:localDay()});});
+ await mutateAccounts(async()=>{await api('/cards/'+encodeURIComponent(cardId)+'/cycles/'+encodeURIComponent(cycle)+'/settle','POST',{paidDate:localDay()});});
 }
 function bindAccounts(){
  $('transferDate').value=localDay();
  $('transferFrom').onchange=()=>{if($('transferFrom').value===$('transferTo').value)$('transferTo').value=$('transferFrom').value==='bank'?'cash':'bank';};
  $('transferTo').onchange=()=>{if($('transferFrom').value===$('transferTo').value)$('transferFrom').value=$('transferTo').value==='bank'?'cash':'bank';};
- $('transferRows').onclick=e=>{const btn=e.target.closest('[data-reverse-transfer]');if(!btn)return;const id=btn.dataset.reverseTransfer;const reason=prompt('Motivo dello storno (almeno 8 caratteri):');if(reason===null)return;mutate(async()=>{await api('/transfers/'+encodeURIComponent(id)+'/reverse','POST',{reason});});};
- $('transferForm').onsubmit=e=>{e.preventDefault();if(!confirm('Registrare il trasferimento? Non è una spesa.'))return;mutate(async()=>{await api('/transfers','POST',{id:'tr-'+crypto.randomUUID(),fromAccountId:$('transferFrom').value,toAccountId:$('transferTo').value,date:$('transferDate').value,amount:Number($('transferAmount').value),note:$('transferNote').value});$('transferForm').reset();$('transferDate').value=localDay();});};
+ $('transferRows').onclick=e=>{const btn=e.target.closest('[data-reverse-transfer]');if(!btn)return;const id=btn.dataset.reverseTransfer;const reason=prompt('Motivo dello storno (almeno 8 caratteri):');if(reason===null)return;mutateAccounts(async()=>{await api('/transfers/'+encodeURIComponent(id)+'/reverse','POST',{reason});});};
+ $('transferForm').onsubmit=e=>{e.preventDefault();if(!confirm('Registrare il trasferimento? Non è una spesa.'))return;mutateAccounts(async()=>{await api('/transfers','POST',{id:'tr-'+crypto.randomUUID(),fromAccountId:$('transferFrom').value,toAccountId:$('transferTo').value,date:$('transferDate').value,amount:Number($('transferAmount').value),note:$('transferNote').value});$('transferForm').reset();$('transferDate').value=localDay();});};
  $('openingAccount').onchange=()=>{const a=accountsData?.accounts?.find(x=>x.id===$('openingAccount').value);$('openingBalance').value=a?.openingBalance??0;};
- $('openingForm').onsubmit=e=>{e.preventDefault();const id=$('openingAccount').value,val=Number($('openingBalance').value);if(!confirm('Impostare il saldo iniziale di '+paymentAccountLabel(id)+' a '+money(val)+'? Verifica di non averlo già registrato come movimento.'))return;mutate(async()=>{await api('/accounts/'+encodeURIComponent(id),'PUT',{name:paymentAccountLabel(id),openingBalance:val});});};
+ $('openingForm').onsubmit=e=>{e.preventDefault();const id=$('openingAccount').value,val=Number($('openingBalance').value);if(!confirm('Impostare il saldo iniziale di '+paymentAccountLabel(id)+' a '+money(val)+'? Verifica di non averlo già registrato come movimento.'))return;mutateAccounts(async()=>{await api('/accounts/'+encodeURIComponent(id),'PUT',{name:paymentAccountLabel(id),openingBalance:val});});};
  $('cardCancel').onclick=resetCardForm;
- $('cardForm').onsubmit=e=>{e.preventDefault();const payload={name:$('cardName').value,closingDay:Number($('cardClosing').value),chargeDay:Number($('cardCharge').value),chargeMonthOffset:Number($('cardOffset').value),settlementMode:$('cardMode').value};const id=cardEditId;if(!id)payload.id='cc-'+crypto.randomUUID();mutate(async()=>{await api(id?'/accounts/'+encodeURIComponent(id):'/accounts',id?'PUT':'POST',payload);resetCardForm();});};
+ $('cardForm').onsubmit=e=>{e.preventDefault();const payload={name:$('cardName').value,closingDay:Number($('cardClosing').value),chargeDay:Number($('cardCharge').value),chargeMonthOffset:Number($('cardOffset').value),settlementMode:$('cardMode').value};const id=cardEditId;if(!id)payload.id='cc-'+crypto.randomUUID();mutateAccounts(async()=>{await api(id?'/accounts/'+encodeURIComponent(id):'/accounts',id?'PUT':'POST',payload);resetCardForm();});};
  $('creditCardsRows').onclick=e=>{const btn=e.target.closest('[data-edit-card]');if(!btn)return;const a=accountsData?.accounts?.find(x=>x.id===btn.dataset.editCard);if(!a)return;cardEditId=a.id;$('cardName').value=a.name;$('cardClosing').value=a.closingDay;$('cardCharge').value=a.chargeDay;$('cardOffset').value=a.chargeMonthOffset;$('cardMode').value=a.settlementMode;$('cardSubmit').textContent='Salva configurazione carta';$('cardCancel').classList.remove('hidden');$('cardName').focus();};
  $('creditCyclesRows').onclick=e=>{const btn=e.target.closest('[data-settle-card]');if(btn)confirmCardSettlement(btn.dataset.settleCard,btn.dataset.cycle);};
  for(const [type,id] of [['txType','txAccount'],['recType','recAccount'],['planType','planAccount']])$(type).addEventListener('change',()=>fillPaymentAccounts(id,$(id).value,$(type).value));
@@ -163,7 +279,7 @@ function renderWorkspacePicker(){
  const option=(id,name,subtitle,icon)=>`<button type="button" class="workspace-option ${activeSpace===id?'selected':''}" role="menuitemradio" aria-checked="${activeSpace===id}" data-pick-space="${html(id)}"><span class="workspace-option-icon">${icon}</span><span class="workspace-option-text"><strong>${html(name)}</strong><small>${html(subtitle)}</small></span>${activeSpace===id?'<span class="workspace-check">✓</span>':''}</button>`;
  $('workspaceOptions').innerHTML=option('','Il mio bilancio','Privato · Solo tu','♙')+(me?.spaces||[]).map(s=>option(s.id,s.name,s.role==='owner'?'Condiviso · Proprietario':s.role==='viewer'?'Condiviso · Lettura':'Condiviso · Membro','⌂')).join('');
 }
-async function selectWorkspace(value){closeWorkspaceMenu();activeSpace=value||'';fundData=null;fundMembers=[];insightsData=null;if(view==='fund'&&!activeSpace||['insights','accounts'].includes(view)&&activeSpace)navigate('home');renderWorkspacePicker();document.querySelector('[data-view="accounts"]').classList.toggle('hidden',!!activeSpace);state={transactions:[],budgets:{},recurring:[],planned:[]};accountsData=null;favorites=[];costs=null;await reload();if(view==='spaces')await renderSpaces();}
+async function selectWorkspace(value){closeWorkspaceMenu();activeSpace=value||'';fundData=null;fundMembers=[];invalidateInsights();if(view==='fund'&&!activeSpace||['insights','accounts'].includes(view)&&activeSpace)navigate('home');renderWorkspacePicker();document.querySelector('[data-view="accounts"]').classList.toggle('hidden',!!activeSpace);state={transactions:[],budgets:{},recurring:[],planned:[]};accountsData=null;favorites=[];costs=null;await reload();if(view==='spaces')await renderSpaces();}
 async function renderSpaces(){if(!me)return;
  $('spaceList').innerHTML=(me.spaces||[]).length?me.spaces.map(s=>`<div class="service"><span><strong>${html(s.name)}</strong><span class="muted"> · ${html(s.role)}</span></span><button class="btn btn-soft space-action" data-space="${html(s.id)}">Apri</button></div>`).join(''):'<div class="empty">Non hai ancora bilanci condivisi.</div>';
  $('inviteList').innerHTML=(me.invites||[]).length?me.invites.map(inv=>`<div class="service"><span><strong>${html(inv.spaceName)}</strong><span class="muted"> · ${html(inv.role)}</span></span><span><button class="btn btn-soft" data-accept="${html(inv.id)}">Accetta</button> <button class="btn btn-soft" data-decline="${html(inv.id)}">Rifiuta</button></span></div>`).join(''):'<div class="empty">Non ci sono inviti in attesa.</div>';
@@ -290,13 +406,16 @@ async function saveQuick(keepOpen){
  let tx;try{tx=quickPayload();}catch(err){$('quickStatus').textContent=err.message;return;}
  busy=true;clearError();$('quickStatus').textContent='Salvataggio in corso…';
  try{
-  await api('/transactions','POST',tx);
+  const scope=activeSpace;
+  const record=await api('/transactions','POST',tx);
+  // Non rilanciamo mai la POST dopo un errore di refresh.
   let favoriteError=false;
   if($('quickFavorite').checked){
-   try{await api('/favorites','POST',{id:'fav-'+crypto.randomUUID(),type:tx.type,amount:tx.amount,description:tx.description,category:tx.category,paymentSource:tx.paymentSource||'fund',accountId:tx.accountId||'bank',spaceId:activeSpace,note:''});}
+   try{const fav=await api('/favorites','POST',{id:'fav-'+crypto.randomUUID(),type:tx.type,amount:tx.amount,description:tx.description,category:tx.category,paymentSource:tx.paymentSource||'fund',accountId:tx.accountId||'bank',spaceId:activeSpace,note:''});if(scope===activeSpace)favorites=upsertLocalRecord(favorites,fav);}
    catch(e){favoriteError=true;}
   }
-  await reload();
+  try{await applyTransactionChange(record,{scope});}
+  catch(e){$('quickDialog').close();error('Movimento salvato, ma la sincronizzazione non è riuscita. Premi Aggiorna prima di continuare. '+e.message);return;}
   if(keepOpen){$('quickAmount').value='';$('quickDescription').value='';$('quickFavorite').checked=false;$('quickAmount').focus();}
   else $('quickDialog').close();
   if(favoriteError)error('Movimento registrato, ma non è stato possibile salvare il preferito.');
@@ -314,10 +433,8 @@ function quickToFull(){
 }
 async function storeFavorite(tx){
  if(!canWrite())return error('Solo lettura');
- await mutate(async()=>{
-  await api('/favorites','POST',{id:'fav-'+crypto.randomUUID(),type:tx.type,description:tx.description,
-   category:tx.category,amount:tx.amount,note:tx.note||'',paymentSource:tx.paymentSource||'fund',accountId:tx.accountId||'bank',spaceId:activeSpace});
- });
+ await mutateFavorite(async()=>api('/favorites','POST',{id:'fav-'+crypto.randomUUID(),type:tx.type,description:tx.description,
+   category:tx.category,amount:tx.amount,note:tx.note||'',paymentSource:tx.paymentSource||'fund',accountId:tx.accountId||'bank',spaceId:activeSpace}));
 }
 function openPlanned(id=null){
  if(!canWrite())return;
@@ -351,7 +468,7 @@ async function handleCalendarClick(e){
  const mark=e.target.closest('[data-plan-complete]');if(mark){openComplete(mark.dataset.planComplete);return;}
  const edit=e.target.closest('[data-plan-edit]');if(edit){openPlanned(edit.dataset.planEdit);return;}
  const del=e.target.closest('[data-plan-delete]');
- if(del&&confirm('Eliminare questa scadenza? Il saldo e i movimenti esistenti non cambieranno.'))await mutate(()=>api('/planned/'+encodeURIComponent(del.dataset.planDelete),'DELETE'));
+ if(del&&confirm('Eliminare questa scadenza? Il saldo e i movimenti esistenti non cambieranno.'))await mutatePlanned(()=>api('/planned/'+encodeURIComponent(del.dataset.planDelete),'DELETE'),{deletedId:del.dataset.planDelete});
 }
 // Moneta 2.2: letture separate per fondo condiviso e patrimonio privato.
 const fundName=id=>id===me?.userId?'Tu':(fundMembers.find(m=>m.id===id)?.email||id.slice(0,8)+'…');
@@ -438,9 +555,28 @@ async function saveFundOperation(e){
   await reload();await loadFund();
  }catch(err){error(err.message);}finally{busy=false;updateFundFields();}
 }
+function invalidateInsights(){
+ insightsVersion++;insightsDirty=true;insightsData=null;
+ renderHomeInsights(null);
+ if(view==='insights')$('insightsContents').classList.add('hidden');
+}
 async function loadInsights(){
  if(activeSpace){$('insightsContents').classList.add('hidden');$('insightsNeedsPersonal').classList.remove('hidden');return;}
- try{const result=await api('/insights');if(activeSpace)return;insightsData=result;$('insightsContents').classList.remove('hidden');$('insightsNeedsPersonal').classList.add('hidden');renderInsights();}catch(e){error(e.message);}
+ if(!insightsDirty&&insightsData){renderInsights();return;}
+ if(insightsRequest)return insightsRequest;
+ const scope=activeSpace,version=insightsVersion;
+ const pending=(async()=>{
+  try{
+   const result=await api('/insights');
+   if(activeSpace!==scope||insightsVersion!==version)return;
+   insightsData=result;insightsDirty=false;$('insightsContents').classList.remove('hidden');$('insightsNeedsPersonal').classList.add('hidden');renderInsights();
+  }catch(e){if(activeSpace===scope)error(e.message);}
+ })();
+ insightsRequest=pending;
+ try{await pending;}finally{
+  if(insightsRequest===pending)insightsRequest=null;
+  if(!activeSpace&&insightsDirty&&insightsVersion!==version&&['home','insights'].includes(view))void loadInsights();
+ }
 }
 function renderHomeInsights(data){
  const host=$('homeInsights');if(!host)return;
@@ -504,7 +640,7 @@ async function saveCapital(e){
  busy=true;clearError();$('capitalSave').disabled=true;
  try{
   await api(old?'/capital/items/'+encodeURIComponent(old.id):'/capital/items',old?'PUT':'POST',data);
-  resetCapitalEdit();await loadInsights();
+  resetCapitalEdit();invalidateInsights();await loadInsights();
  }catch(err){error(err.message);}finally{busy=false;$('capitalSave').disabled=false;}
 }
 function beginReversal(id){
@@ -572,7 +708,6 @@ function bind(){
   if(b&&confirm('Eliminare questo elemento dal patrimonio?'))mutate(async()=>{
     await api('/capital/items/'+encodeURIComponent(b.dataset.deleteCapital),'DELETE');
     if(capitalEditId===b.dataset.deleteCapital)resetCapitalEdit();
-    await loadInsights();
   });
  });
  $('openQuickButton').onclick=()=>openQuick();$('mobileQuick').onclick=()=>openQuick();
@@ -583,7 +718,7 @@ function bind(){
  document.querySelectorAll('input[name="quickType"]').forEach(r=>r.onchange=updateQuickCategories);
  $('favoriteChips').onclick=e=>{const f=e.target.closest('[data-use-fav]'),del=e.target.closest('[data-delete-fav]');
   if(f){const record=favorites.find(x=>x.id===f.dataset.useFav);if(record)openQuick(record);}
-  if(del&&confirm('Rimuovere il preferito?'))mutate(()=>api('/favorites/'+encodeURIComponent(del.dataset.deleteFav),'DELETE'));
+  if(del&&confirm('Rimuovere il preferito?')){const id=del.dataset.deleteFav;mutateFavorite(()=>api('/favorites/'+encodeURIComponent(id),'DELETE'),{deletedId:id});}
  };
  $('addPlannedButton').onclick=()=>openPlanned();
  $('calendarPrev').onclick=()=>{calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()-1,1);calendarDate='';renderCalendar();};
@@ -591,7 +726,7 @@ function bind(){
  $('calendarGrid').onclick=handleCalendarClick;$('calendarList').onclick=handleCalendarClick;$('homeUpcoming').onclick=handleCalendarClick;
  $('closePlanned').onclick=$('cancelPlanned').onclick=()=>$('plannedDialog').close();
  $('planType').onchange=()=>{categories($('planType').value,'planCategory');fillPaymentAccounts('planAccount',$('planAccount').value,$('planType').value);};
- $('plannedForm').onsubmit=e=>{e.preventDefault();const payload=planPayload();mutate(async()=>{await api(editPlanId?'/planned/'+encodeURIComponent(editPlanId):'/planned',editPlanId?'PUT':'POST',payload);$('plannedDialog').close();});};
+ $('plannedForm').onsubmit=e=>{e.preventDefault();const payload=planPayload();mutatePlanned(async()=>{const result=await api(editPlanId?'/planned/'+encodeURIComponent(editPlanId):'/planned',editPlanId?'PUT':'POST',payload);$('plannedDialog').close();return result;});};
  $('closeComplete').onclick=$('cancelComplete').onclick=()=>$('completeDialog').close();
  $('completeForm').onsubmit=e=>{e.preventDefault();const id=completePlanId;mutate(async()=>{await api('/planned/'+encodeURIComponent(id)+'/complete','POST',{paidDate:$('completeDate').value});$('completeDialog').close();});};
  document.querySelectorAll('[data-mobile-view]').forEach(el=>el.onclick=()=>navigate(el.dataset.mobileView));
@@ -601,11 +736,22 @@ function bind(){
  $('manageSpacesShortcut').onclick=()=>{closeWorkspaceMenu();navigate('spaces');};
  document.addEventListener('click',e=>{if(!e.target.closest('#workspacePicker'))closeWorkspaceMenu();});
  document.addEventListener('keydown',e=>{if(e.key==='Escape')closeWorkspaceMenu();});$('prevMonth').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1);render();};$('nextMonth').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1);render();};$('txRepeat').onchange=()=>{$('txRepeatFields').classList.toggle('hidden',!$('txRepeat').checked);};$('txType').onchange=()=>{categories($('txType').value,'txCategory');fillPaymentAccounts('txAccount',$('txAccount').value,$('txType').value);};$('recType').onchange=()=>{categories($('recType').value,'recCategory');fillPaymentAccounts('recAccount',$('recAccount').value,$('recType').value);};$('cancelTx').onclick=$('cancelTxBottom').onclick=()=>$('txDialog').close();$('cancelRec').onclick=$('cancelRecBottom').onclick=()=>$('recDialog').close();
- $('txForm').onsubmit=e=>{e.preventDefault();const t={id:editId||'tx-'+crypto.randomUUID(),type:$('txType').value,description:$('txDescription').value.trim(),amount:Number($('txAmount').value),date:$('txDate').value,category:$('txCategory').value,note:$('txNote').value.trim()};if(activeSpace)t.paymentSource=$('txFunding').value;else t.accountId=$('txAccount').value;if(!Number.isFinite(t.amount)||t.amount<=0)return;mutate(async()=>{if(!editId&&$('txRepeat').checked){const interval=Number($('txInterval').value),endDate=$('txEnd').value||null;if(!Number.isInteger(interval)||interval<1||interval>12)throw Error('Intervallo non valido');if(endDate&&endDate<t.date)throw Error('La fine non può precedere l’inizio');await api('/recurring','POST',{...t,id:'r-'+crypto.randomUUID(),startDate:t.date,frequency:$('txFrequency').value,interval,endDate,active:true,recordFirstOccurrence:true});}else await api(editId?'/transactions/'+encodeURIComponent(editId):'/transactions',editId?'PUT':'POST',t);$('txDialog').close();});};
- $('recForm').onsubmit=e=>{e.preventDefault();const r={id:editRecId||'r-'+crypto.randomUUID(),type:$('recType').value,description:$('recDescription').value.trim(),amount:Number($('recAmount').value),startDate:$('recStart').value,category:$('recCategory').value,frequency:$('recFrequency').value,interval:Number($('recInterval').value),endDate:$('recEnd').value||null,note:$('recNote').value.trim(),active:$('recActive').checked};if(activeSpace)r.paymentSource=$('recFunding').value;else r.accountId=$('recAccount').value;if(!Number.isFinite(r.amount)||r.amount<=0)return;mutate(async()=>{await api(editRecId?'/recurring/'+encodeURIComponent(editRecId):'/recurring',editRecId?'PUT':'POST',r);$('recDialog').close();});};
- $('transactionRows').addEventListener('click',e=>{const a=e.target.closest('[data-edit]'),b=e.target.closest('[data-delete]'),f=e.target.closest('[data-fav-tx]');if(f){const tx=state.transactions.find(t=>t.id===f.dataset.favTx);if(tx)storeFavorite(tx);return;}if(a)editTransaction(a.dataset.edit);if(b&&confirm('Eliminare definitivamente questo movimento?'))mutate(()=>api('/transactions/'+encodeURIComponent(b.dataset.delete),'DELETE'));});
- $('recurringRows').addEventListener('click',e=>{const a=e.target.closest('[data-rec-edit]'),b=e.target.closest('[data-rec-delete]');if(a)editRecurring(a.dataset.recEdit);if(b&&confirm('Eliminare la ricorrenza? I movimenti già creati resteranno.'))mutate(()=>api('/recurring/'+encodeURIComponent(b.dataset.recDelete),'DELETE'));});
- $('budgetRows').addEventListener('change',e=>{const el=e.target.closest('[data-budget]');if(!el)return;const amount=Number(el.value);if(!Number.isFinite(amount)||amount<0||amount>1000000){error('Budget non valido');render();return;}mutate(()=>api('/budgets/'+encodeURIComponent(el.dataset.budget),'PUT',{amount}));});
+ $('txForm').onsubmit=e=>{e.preventDefault();const t={id:editId||'tx-'+crypto.randomUUID(),type:$('txType').value,description:$('txDescription').value.trim(),amount:Number($('txAmount').value),date:$('txDate').value,category:$('txCategory').value,note:$('txNote').value.trim()};if(activeSpace)t.paymentSource=$('txFunding').value;else t.accountId=$('txAccount').value;if(!Number.isFinite(t.amount)||t.amount<=0)return;if(!editId&&$('txRepeat').checked){
+  mutateRecurring(async()=>{
+   const interval=Number($('txInterval').value),endDate=$('txEnd').value||null;
+   if(!Number.isInteger(interval)||interval<1||interval>12)throw Error('Intervallo non valido');
+   if(endDate&&endDate<t.date)throw Error('La fine non può precedere l’inizio');
+   const result=await api('/recurring','POST',{...t,id:'r-'+crypto.randomUUID(),startDate:t.date,frequency:$('txFrequency').value,interval,endDate,active:true,recordFirstOccurrence:true});
+   $('txDialog').close();return result;
+  },{firstOccurrence:true});
+ }else{
+  const previous=state.transactions.find(row=>row.id===editId)||null;
+  mutateTransaction(async()=>{const result=await api(editId?'/transactions/'+encodeURIComponent(editId):'/transactions',editId?'PUT':'POST',t);$('txDialog').close();return result;},{previous});
+ }};
+ $('recForm').onsubmit=e=>{e.preventDefault();const r={id:editRecId||'r-'+crypto.randomUUID(),type:$('recType').value,description:$('recDescription').value.trim(),amount:Number($('recAmount').value),startDate:$('recStart').value,category:$('recCategory').value,frequency:$('recFrequency').value,interval:Number($('recInterval').value),endDate:$('recEnd').value||null,note:$('recNote').value.trim(),active:$('recActive').checked};if(activeSpace)r.paymentSource=$('recFunding').value;else r.accountId=$('recAccount').value;if(!Number.isFinite(r.amount)||r.amount<=0)return;mutateRecurring(async()=>{const saved=await api(editRecId?'/recurring/'+encodeURIComponent(editRecId):'/recurring',editRecId?'PUT':'POST',r);$('recDialog').close();return saved;});};
+ $('transactionRows').addEventListener('click',e=>{const a=e.target.closest('[data-edit]'),b=e.target.closest('[data-delete]'),f=e.target.closest('[data-fav-tx]');if(f){const tx=state.transactions.find(t=>t.id===f.dataset.favTx);if(tx)storeFavorite(tx);return;}if(a)editTransaction(a.dataset.edit);if(b&&confirm('Eliminare definitivamente questo movimento?')){const id=b.dataset.delete;mutateTransaction(()=>api('/transactions/'+encodeURIComponent(id),'DELETE'),{previous:state.transactions.find(t=>t.id===id),deletedId:id});}});
+ $('recurringRows').addEventListener('click',e=>{const a=e.target.closest('[data-rec-edit]'),b=e.target.closest('[data-rec-delete]');if(a)editRecurring(a.dataset.recEdit);if(b&&confirm('Eliminare la ricorrenza? I movimenti già creati resteranno.')){const id=b.dataset.recDelete;mutateRecurring(()=>api('/recurring/'+encodeURIComponent(id),'DELETE'),{deletedId:id});}});
+ $('budgetRows').addEventListener('change',e=>{const el=e.target.closest('[data-budget]');if(!el)return;const amount=Number(el.value);if(!Number.isFinite(amount)||amount<0||amount>1000000){error('Budget non valido');render();return;}mutateBudget(el.dataset.budget,amount);});
  $('spaceCreateForm').onsubmit=e=>{e.preventDefault();mutate(async()=>{await api('/spaces','POST',{name:$('newSpaceName').value.trim()});$('newSpaceName').value='';await refreshMe();});};
  $('spaceInviteForm').onsubmit=e=>{e.preventDefault();mutate(async()=>{await api('/spaces/'+encodeURIComponent(activeSpace)+'/invites','POST',{email:$('inviteEmail').value.trim(),role:$('inviteRole').value});$('inviteEmail').value='';await refreshMe();});};
  $('spaceList').addEventListener('click',e=>{const b=e.target.closest('[data-space]');if(b){selectWorkspace(b.dataset.space);navigate('home');}});

@@ -1,4 +1,4 @@
-> **Versione corrente: Moneta 2.3.3 — Panoramica banca/contanti e MFA Cognito disabilitata di default.** Leggi [`RELEASE_NOTES_2.3.3.md`](RELEASE_NOTES_2.3.3.md) prima del deploy. Le informazioni sulle release precedenti qui sotto sono storiche e possono descrivere vecchie impostazioni MFA.
+> **Versione corrente: Moneta 2.3.5 — Ottimizzazione delle chiamate API e dei refresh del frontend.** Leggi [`RELEASE_NOTES_2.3.5.md`](RELEASE_NOTES_2.3.5.md) prima del deploy. Le sezioni storiche riportate sotto si riferiscono a versioni precedenti e possono contenere indicazioni non più attuali.
 
 > **Storico 2.3.1:** correzione delle date carte e dei layout mobile.
 
@@ -202,3 +202,11 @@ test possono verificare la struttura YAML ma non la risposta dell’API AWS.
 Per le nuove funzionalità consulta [RELEASE_NOTES_2.3.0.md](RELEASE_NOTES_2.3.0.md) e [docs/CHECKLIST_CONTABILE_2.3.md](docs/CHECKLIST_CONTABILE_2.3.md).
 
 La versione usa solo i servizi AWS esistenti e introduce sei rotte API JWT. I conti non creano nuove tabelle. La modalità di addebito delle carte è **con conferma** di default. Prima di cambiare il saldo iniziale, confronta le operazioni esistenti: un importo già registrato come movimento iniziale non va registrato una seconda volta.
+
+## Aggiornamento 2.3.4
+
+Correzione throttling HTTP 429, nuova categoria `Calcetto`, Home con disponibilità operativa (banca + contanti) senza conto deposito. Vedi `RELEASE_NOTES_2.3.4.md` per dettagli e collaudo.
+
+## Aggiornamento 2.3.5
+
+Riduzione dei ricaricamenti API dopo modifiche a movimenti, conti, preferiti, budget e scadenze; cache Insights in memoria della sessione, invalidata al bisogno. Vedi [RELEASE_NOTES_2.3.5.md](RELEASE_NOTES_2.3.5.md).
