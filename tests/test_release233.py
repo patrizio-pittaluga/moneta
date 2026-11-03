@@ -33,6 +33,6 @@ class Release233Tests(unittest.TestCase):
         self.assertIn("classList.toggle('hidden',!showPersonalAccounts)",js)
         self.assertIn('let balancesVisible=false;',js)
         self.assertIn('node.textContent=balancesVisible?node.dataset.privateValue:BALANCE_MASK;',js)
-        self.assertIn('moneta-static-v2.3.5',(ROOT/'frontend/sw.js').read_text())
+        self.assertIn('moneta-static-v2.3.6',(ROOT/'frontend/sw.js').read_text())
 
 if __name__=='__main__':unittest.main()

@@ -29,7 +29,7 @@ class Performance235Tests(unittest.TestCase):
         self.assertIn('insightsVersion++', JS)
         self.assertIn('if(insightsRequest)return insightsRequest;', JS)
         sw = (ROOT / 'frontend/sw.js').read_text()
-        self.assertIn('moneta-static-v2.3.5',sw)
+        self.assertIn('moneta-static-v2.3.6',sw)
         self.assertNotIn("'/accounts'", sw)
         self.assertNotIn("'/state'", sw)
         self.assertNotIn("'/insights'", sw)

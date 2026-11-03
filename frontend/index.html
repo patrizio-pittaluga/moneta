@@ -58,7 +58,32 @@
     <section class="panel upcoming-panel" aria-labelledby="upcomingTitle"><div class="panel-title"><div><h2 id="upcomingTitle">Le prossime scadenze</h2><p>Pagamenti e entrate previste nei prossimi 30 giorni, senza addebiti anticipati</p></div><button class="link-btn" data-go="calendar">Apri calendario →</button></div><div id="homeUpcoming" class="upcoming-list"></div></section>
     <section class="panel space-top"><div class="panel-title"><div><h2>Ultimi movimenti</h2><p>Le ultime 7 operazioni registrate</p></div><button class="link-btn" data-go="movements">Vedi tutti →</button></div><div class="table-wrap" id="recentRows"></div></section>
    </section>
-   <section id="view-movements" class="view hidden"><div class="page-title-row"><div><div class="eyebrow">STORICO COMPLETO</div><h1>Tutti i movimenti<span class="brand-dot">.</span></h1><p>Controlla e modifica entrate e uscite.</p></div><button id="addMovementButton" class="btn btn-main">＋ Nuovo movimento</button></div><div class="panel"><div class="filterbar"><button id="prevMonth" class="icon-button" aria-label="Mese precedente">‹</button><strong id="monthLabel"></strong><button id="nextMonth" class="icon-button" aria-label="Mese successivo">›</button><span class="spacer"></span><span class="muted">Filtrati per mese</span></div><div id="transactionRows" class="table-wrap"></div></div></section>
+   <section id="view-movements" class="view hidden"><div class="page-title-row"><div><div class="eyebrow">STORICO COMPLETO</div><h1>Tutti i movimenti<span class="brand-dot">.</span></h1><p>Controlla e modifica entrate e uscite.</p></div><button id="addMovementButton" class="btn btn-main">＋ Nuovo movimento</button></div><div class="panel"><div class="movement-filters" role="search" aria-label="Filtra movimenti">
+  <div class="movement-filter-top">
+   <label class="field">Periodo<select class="input" id="txFilterPeriod"><option value="month">Mese selezionato</option><option value="previous">Mese precedente</option><option value="90days">Ultimi 90 giorni</option><option value="year">Anno in corso</option><option value="all">Tutto lo storico</option><option value="custom">Intervallo personalizzato</option></select></label>
+   <div class="filterbar tx-month-nav" id="txMonthNav"><button id="prevMonth" class="icon-button" aria-label="Mese precedente">‹</button><strong id="monthLabel"></strong><button id="nextMonth" class="icon-button" aria-label="Mese successivo">›</button></div>
+   <button type="button" id="txFilterReset" class="btn btn-soft tx-filter-reset">Azzera filtri</button>
+  </div>
+  <div class="movement-filter-grid">
+    <label class="field">Cerca per descrizione o nota<input id="txFilterQuery" class="input" type="search" placeholder="Es. calcetto, supermercato" autocomplete="off"></label>
+    <label class="field">Categoria<select id="txFilterCategory" class="input"><option value="">Tutte le categorie</option></select></label>
+    <label class="field">Tipo<select id="txFilterType" class="input"><option value="">Entrate e uscite</option><option value="expense">Solo uscite</option><option value="income">Solo entrate</option></select></label>
+    <div class="movement-filter-dates hidden" id="txFilterCustomDates">
+      <label class="field">Dal<input id="txFilterFrom" class="input" type="date" disabled></label>
+      <label class="field">Al<input id="txFilterTo" class="input" type="date" disabled></label>
+    </div>
+  </div>
+  <details class="movement-advanced" id="txFilterAdvanced">
+    <summary>Altri filtri: conto, ricorrenze, importi <span id="txFilterAdvancedCount"></span></summary>
+    <div class="movement-filter-grid movement-filter-grid-advanced">
+      <label class="field"><span id="txFilterAccountLabel">Conto / carta</span><select id="txFilterAccount" class="input"><option value="">Tutti i conti</option></select></label>
+      <label class="field">Movimenti<select id="txFilterRecurrence" class="input"><option value="">Tutti</option><option value="recurring">Solo ricorrenti</option><option value="single">Solo non ricorrenti</option><option value="active">Non stornati</option><option value="reversed">Storni e movimenti stornati</option></select></label>
+      <label class="field">Importo minimo (€)<input id="txFilterMin" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Nessun minimo"></label>
+      <label class="field">Importo massimo (€)<input id="txFilterMax" class="input" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Nessun massimo"></label>
+    </div>
+  </details>
+  <div class="movement-filter-summary" id="txFilterFeedback" role="status" aria-live="polite"></div>
+ </div><div id="transactionRows" class="table-wrap"></div></div></section>
    <section id="view-accounts" class="view hidden">
     <div class="page-title-row"><div><div class="eyebrow">GESTIONE DENARO</div><h1>I miei conti<span class="brand-dot">.</span></h1><p>Conto corrente, contanti, deposito, carte di credito e trasferimenti.</p></div><button type="button" class="balance-toggle" data-balance-toggle="accounts" aria-label="Mostra saldo" aria-pressed="false" title="Mostra saldo">◉</button></div>
     <div id="accountsSummary" class="account-summary-grid"></div>

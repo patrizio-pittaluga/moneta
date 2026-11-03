@@ -1,4 +1,4 @@
-> **Versione corrente: Moneta 2.3.5 — Ottimizzazione delle chiamate API e dei refresh del frontend.** Leggi [`RELEASE_NOTES_2.3.5.md`](RELEASE_NOTES_2.3.5.md) prima del deploy. Le sezioni storiche riportate sotto si riferiscono a versioni precedenti e possono contenere indicazioni non più attuali.
+> **Versione corrente: Moneta 2.3.6 — Filtri avanzati nello storico e categorie Investimenti/Risparmio.** Leggi [`RELEASE_NOTES_2.3.6.md`](RELEASE_NOTES_2.3.6.md) prima del deploy. La 2.3.5 resta inclusa come base delle ottimizzazioni. Le sezioni storiche riportate sotto si riferiscono a versioni precedenti e possono contenere indicazioni non più attuali.
 
 > **Storico 2.3.1:** correzione delle date carte e dei layout mobile.
 

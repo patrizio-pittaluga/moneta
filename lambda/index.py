@@ -23,7 +23,7 @@ TABLE = boto3.resource('dynamodb').Table(os.environ['TABLE_NAME'])
 CLIENT_ID = os.environ['COGNITO_CLIENT_ID']
 ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,80}$')
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-EXPENSE = frozenset(('Casa', 'Affitto e mutuo', 'Condominio', 'Alimentari', 'Ristoranti', 'Bar e caffè', 'Bollette', 'Telefonia e Internet', 'Abbonamenti', 'Trasporti', 'Carburante', 'Auto e manutenzione', 'Assicurazioni', 'Salute', 'Farmacia', 'Istruzione', 'Animali domestici', 'Abbigliamento', 'Shopping', 'Tecnologia', 'Svago', 'Calcetto', 'Viaggi', 'Regali', 'Tasse', 'Spese bancarie', 'Altro'))
+EXPENSE = frozenset(('Casa', 'Affitto e mutuo', 'Condominio', 'Alimentari', 'Ristoranti', 'Bar e caffè', 'Bollette', 'Telefonia e Internet', 'Abbonamenti', 'Trasporti', 'Carburante', 'Auto e manutenzione', 'Assicurazioni', 'Salute', 'Farmacia', 'Istruzione', 'Animali domestici', 'Abbigliamento', 'Shopping', 'Tecnologia', 'Svago', 'Calcetto', 'Investimenti', 'Risparmio', 'Viaggi', 'Regali', 'Tasse', 'Spese bancarie', 'Altro'))
 INCOME = frozenset(('Stipendio', 'Bonus e premi', 'Straordinari', 'Lavoro autonomo', 'Affitti percepiti', 'Vendite', 'Regali ricevuti', 'Interessi', 'Dividendi', 'Rimborsi', 'Extra', 'Altre entrate'))
 FREQUENCIES = frozenset(('weekly', 'monthly', 'quarterly', 'yearly'))
 

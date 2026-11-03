@@ -36,9 +36,9 @@ class UiAndThrottle234(unittest.TestCase):
         self.assertIn('id="homeCashBalance"',html)
 
     def test_calcetto_present_on_client_and_server(self):
-        self.assertIn('"Svago", "Calcetto", "Viaggi"',(ROOT/'frontend/app.js').read_text())
-        self.assertIn("'Svago', 'Calcetto', 'Viaggi'",(ROOT/'lambda/index.py').read_text())
-        self.assertIn('moneta-static-v2.3.5',(ROOT/'frontend/sw.js').read_text())
+        self.assertIn('"Svago", "Calcetto", "Investimenti", "Risparmio", "Viaggi"',(ROOT/'frontend/app.js').read_text())
+        self.assertIn("'Svago', 'Calcetto', 'Investimenti', 'Risparmio', 'Viaggi'",(ROOT/'lambda/index.py').read_text())
+        self.assertIn('moneta-static-v2.3.6',(ROOT/'frontend/sw.js').read_text())
 
 class Accounting234(Accounts23Base,unittest.TestCase):
     def test_deposit_stays_out_of_operational_balance_even_when_it_moves(self):

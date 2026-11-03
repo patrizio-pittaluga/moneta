@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-const CATS=["Casa", "Affitto e mutuo", "Condominio", "Alimentari", "Ristoranti", "Bar e caffè", "Bollette", "Telefonia e Internet", "Abbonamenti", "Trasporti", "Carburante", "Auto e manutenzione", "Assicurazioni", "Salute", "Farmacia", "Istruzione", "Animali domestici", "Abbigliamento", "Shopping", "Tecnologia", "Svago", "Calcetto", "Viaggi", "Regali", "Tasse", "Spese bancarie", "Altro"];
+const CATS=["Casa", "Affitto e mutuo", "Condominio", "Alimentari", "Ristoranti", "Bar e caffè", "Bollette", "Telefonia e Internet", "Abbonamenti", "Trasporti", "Carburante", "Auto e manutenzione", "Assicurazioni", "Salute", "Farmacia", "Istruzione", "Animali domestici", "Abbigliamento", "Shopping", "Tecnologia", "Svago", "Calcetto", "Investimenti", "Risparmio", "Viaggi", "Regali", "Tasse", "Spese bancarie", "Altro"];
 const INCOME=["Stipendio", "Bonus e premi", "Straordinari", "Lavoro autonomo", "Affitti percepiti", "Vendite", "Regali ricevuti", "Interessi", "Dividendi", "Rimborsi", "Extra", "Altre entrate"];
 const DEFAULT_BUDGETS={Casa:700,Alimentari:400,Trasporti:180,Bollette:220,Salute:100,Svago:160,Shopping:140,Altro:100};
 const $=id=>document.getElementById(id);
@@ -112,8 +112,93 @@ function render(){$('addButton').classList.toggle('hidden',!canWrite());$('addMo
  const months=Array.from({length:6},(_,i)=>new Date(new Date().getFullYear(),new Date().getMonth()-5+i,1));const labels=months.map(d=>d.toLocaleDateString('it-IT',{month:'short'}));const inc=[],out=[],balances=[];
  months.forEach((d,i)=>{const key=monthKey(d),dateEnd=i===5?today:new Date(d.getFullYear(),d.getMonth()+1,0).toLocaleDateString('en-CA');const rows=valid.filter(t=>t.date.startsWith(key));inc.push(sum(rows,'income'));out.push(sum(rows,'expense'));const last=i===5?today:`${key}-${String(new Date(d.getFullYear(),d.getMonth()+1,0).getDate()).padStart(2,'0')}`;balances.push(balance(valid.filter(t=>t.date<=last)));});
  $('balanceChart').innerHTML=chartSvg([balances],labels,{colors:['#72e6d6']});$('flowChart').innerHTML=chartSvg([inc,out],labels,{colors:['#55e8bb','#ff8d9e'],includeZero:true});
- $('monthLabel').textContent=month.toLocaleDateString('it-IT',{month:'long',year:'numeric'});$('transactionRows').innerHTML=table(state.transactions.filter(t=>t.date.slice(0,7)===monthKey(month)).sort(txSort),true);
+ renderMovements();
  $('recurringCount').textContent=state.recurring.length+' regole';$('recurringRows').innerHTML=recurringTable();renderBudgets();extraRender();}
+// Filtri locali sullo storico già autorizzato e caricato: nessuna richiesta API aggiuntiva.
+const movementFilters={period:'month',category:'',type:'',account:'',recurrence:'',query:'',from:'',to:'',min:'',max:''};
+function movementPeriodBounds(filters,now=localDay()){
+ const year=Number(now.slice(0,4)),monthNumber=Number(now.slice(5,7));
+ const first=monthKey(month)+'-01';
+ const monthEnd=String(new Date(month.getFullYear(),month.getMonth()+1,0).getDate()).padStart(2,'0');
+ if(filters.period==='month')return {from:first,to:monthKey(month)+'-'+monthEnd};
+ if(filters.period==='previous'){const d=new Date(year,monthNumber-2,1),end=new Date(year,monthNumber-1,0);return {from:monthKey(d)+'-01',to:monthKey(d)+'-'+String(end.getDate()).padStart(2,'0')};}
+ if(filters.period==='90days'){const d=new Date(year,monthNumber-1,Number(now.slice(8,10)));d.setDate(d.getDate()-89);return {from:`${monthKey(d)}-${String(d.getDate()).padStart(2,'0')}`,to:now};}
+ if(filters.period==='year')return {from:String(year)+'-01-01',to:now};
+ if(filters.period==='custom')return {from:filters.from,to:filters.to};
+ return {from:'',to:''};
+}
+function filterMovementRows(rows,filters,scope='',now=localDay()){
+ const bounds=movementPeriodBounds(filters,now);
+ if(filters.period==='custom'&&!bounds.from&&!bounds.to)return {rows:[],error:'Seleziona almeno una data per l’intervallo personalizzato.'};
+ if(bounds.from&&bounds.to&&bounds.from>bounds.to)return {rows:[],error:'La data iniziale non può essere successiva a quella finale.'};
+ const min=filters.min==null||filters.min===''?null:Number(filters.min),max=filters.max==null||filters.max===''?null:Number(filters.max);
+ if((min!==null&&(!Number.isFinite(min)||min<0))||(max!==null&&(!Number.isFinite(max)||max<0))||(min!==null&&max!==null&&min>max))return {rows:[],error:'Controlla gli importi minimi e massimi inseriti.'};
+ const query=(filters.query||'').trim().toLocaleLowerCase('it-IT');
+ return {rows:rows.filter(t=>{
+  if(bounds.from&&t.date<bounds.from||bounds.to&&t.date>bounds.to)return false;
+  if(filters.category&&t.category!==filters.category)return false;
+  if(filters.type&&t.type!==filters.type)return false;
+  if(filters.account&&(scope?(t.paymentSource||'fund'):(t.accountId||'bank'))!==filters.account)return false;
+  if(filters.recurrence==='recurring'&&!t.recurringId)return false;
+  if(filters.recurrence==='single'&&!!t.recurringId)return false;
+  if(filters.recurrence==='reversed'&&!(t.isCorrection||t.isReversed))return false;
+  if(filters.recurrence==='active'&&(t.isCorrection||t.isReversed))return false;
+  const amount=Number(t.amount);
+  if(min!==null&&amount<min||max!==null&&amount>max)return false;
+  if(query&&!`${t.description||''} ${t.note||''} ${t.category||''}`.toLocaleLowerCase('it-IT').includes(query))return false;
+  return true;
+ }).sort(txSort),error:''};
+}
+function updateMovementFilterOptions(){
+ const cat=$('txFilterCategory'),account=$('txFilterAccount');
+ const chosenCategory=movementFilters.category,chosenAccount=movementFilters.account;
+ const source=movementFilters.type==='income'?INCOME:movementFilters.type==='expense'?CATS:[...CATS,...INCOME];
+ const categoryRows=state.transactions.filter(t=>!movementFilters.type||t.type===movementFilters.type);
+ const catNames=[...new Set([...source,...categoryRows.map(t=>t.category).filter(Boolean)])].sort((a,b)=>a.localeCompare(b,'it'));
+ cat.innerHTML='<option value="">Tutte le categorie</option>'+catNames.map(name=>`<option value="${html(name)}">${html(name)}</option>`).join('');
+ cat.value=catNames.includes(chosenCategory)?chosenCategory:'';
+ movementFilters.category=cat.value;
+ $('txFilterAccountLabel').textContent=activeSpace?'Origine del pagamento':'Conto / carta';
+ let options;
+ if(activeSpace){options=[['fund','Fondo comune'],['personal','Pagamento personale']];}
+ else{
+  const ids=[...new Set(['bank','cash',...state.transactions.map(t=>t.accountId||'bank')])];
+  options=ids.map(id=>[id,paymentAccountLabel(id)]);
+ }
+ account.innerHTML='<option value="">Tutti i conti</option>'+options.map(([id,label])=>`<option value="${html(id)}">${html(label)}</option>`).join('');
+ account.value=options.some(([id])=>id===chosenAccount)?chosenAccount:'';
+ movementFilters.account=account.value;
+}
+function renderMovements(){
+ updateMovementFilterOptions();
+ $('txMonthNav').classList.toggle('hidden',movementFilters.period!=='month');
+ $('monthLabel').textContent=month.toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+ $('txFilterFrom').disabled=$('txFilterTo').disabled=movementFilters.period!=='custom';
+ $('txFilterCustomDates').classList.toggle('hidden',movementFilters.period!=='custom');
+ const advancedActive=['account','recurrence','min','max'].filter(key=>movementFilters[key]!=='').length;
+ $('txFilterAdvancedCount').textContent=advancedActive?'· '+advancedActive+' attivi':'';
+ const result=filterMovementRows(state.transactions,movementFilters,activeSpace);
+ const count=result.rows.length;
+ const income=sum(result.rows,'income'),expenses=sum(result.rows,'expense');
+ $('txFilterFeedback').textContent=result.error||`${count} ${count===1?'movimento trovato':'movimenti trovati'} · Entrate ${money(income)} · Uscite ${money(expenses)}`;
+ $('txFilterFeedback').classList.toggle('filter-error',!!result.error);
+ $('transactionRows').innerHTML=result.error?'<div class="empty">'+html(result.error)+'</div>':count?table(result.rows,true):'<div class="empty">Nessun movimento corrisponde ai filtri selezionati.</div>';
+}
+function bindMovementFilters(){
+ $('txFilterPeriod').onchange=e=>{movementFilters.period=e.target.value;renderMovements();};
+ const fields={txFilterCategory:'category',txFilterType:'type',txFilterAccount:'account',txFilterRecurrence:'recurrence',txFilterQuery:'query',txFilterFrom:'from',txFilterTo:'to',txFilterMin:'min',txFilterMax:'max'};
+ for(const [id,key] of Object.entries(fields)){
+  $(id).addEventListener(['query','min','max'].includes(key)?'input':'change',e=>{movementFilters[key]=e.target.value;renderMovements();});
+ }
+ $('txFilterReset').onclick=()=>resetMovementFilters();
+}
+function resetMovementFilters(){
+ Object.assign(movementFilters,{period:'month',category:'',type:'',account:'',recurrence:'',query:'',from:'',to:'',min:'',max:''});
+ month=new Date(new Date().getFullYear(),new Date().getMonth(),1);
+ $('txFilterPeriod').value='month';
+ for(const id of ['txFilterCategory','txFilterType','txFilterAccount','txFilterRecurrence','txFilterQuery','txFilterFrom','txFilterTo','txFilterMin','txFilterMax'])$(id).value='';
+ renderMovements();
+}
 function recurringTable(){const rows=[...state.recurring].sort((a,b)=>a.startDate.localeCompare(b.startDate));if(!rows.length)return '<div class="empty">Non hai ancora creato ricorrenze. Puoi iniziare con affitto, stipendi o abbonamenti.</div>';const freq={weekly:'settimanale',monthly:'mensile',quarterly:'trimestrale',yearly:'annuale'};return `<table class="data-table"><thead><tr><th>REGOLA</th><th>CADENZA</th><th>PROSSIMA/INIZIO</th><th class="right">IMPORTO</th><th class="right">AZIONI</th></tr></thead><tbody>${rows.map(r=>`<tr><td><strong>${html(r.description)}</strong><div class="muted">${r.active?'● Attiva':'○ In pausa'}</div></td><td><span class="pill">${r.interval>1?'ogni '+r.interval+' × ':''}${html(freq[r.frequency])}</span></td><td>${html(dateName(r.startDate))}</td><td class="right ${r.type==='income'?'positive':'negative'}">${r.type==='income'?'+':'−'}${money(r.amount)}</td><td class="right"><button class="table-action" ${canWrite()?'':'disabled'} data-rec-edit="${html(r.id)}">Modifica</button><button class="table-action danger" ${canWrite()?'':'disabled'} data-rec-delete="${html(r.id)}">Elimina</button></td></tr>`).join('')}</tbody></table>`;}
 function renderBudgets(){const monthTx=state.transactions.filter(t=>t.date.slice(0,7)===monthKey(month));$('budgetRows').innerHTML=CATS.map(cat=>{const cap=Number(state.budgets[cat]||0),spent=sum(monthTx.filter(x=>x.category===cat),'expense'),p=cap?spent/cap*100:0;return `<div class="budget"><div class="budget-head"><strong>${html(cat)}</strong><input class="input budget-input" type="number" step="0.01" min="0" max="1000000" data-budget="${html(cat)}" aria-label="Budget ${html(cat)}" value="${cap}" ${canWrite()?'':'disabled'}></div><div class="track"><div class="fill ${p>100?'over':''}" style="width:${Math.min(100,Math.max(0,p))}%"></div></div><div class="muted">${money(spent)} di ${money(cap)}</div></div>`;}).join('');}
 async function loadCosts(){clearError();$('costStatus').textContent='Caricamento costi AWS…';$('loadCostsButton').disabled=true;try{costs=await api('/costs');renderCosts();}catch(e){error(e.message);$('costStatus').textContent='Impossibile caricare i costi.';}finally{$('loadCostsButton').disabled=false;}}
@@ -279,7 +364,7 @@ function renderWorkspacePicker(){
  const option=(id,name,subtitle,icon)=>`<button type="button" class="workspace-option ${activeSpace===id?'selected':''}" role="menuitemradio" aria-checked="${activeSpace===id}" data-pick-space="${html(id)}"><span class="workspace-option-icon">${icon}</span><span class="workspace-option-text"><strong>${html(name)}</strong><small>${html(subtitle)}</small></span>${activeSpace===id?'<span class="workspace-check">✓</span>':''}</button>`;
  $('workspaceOptions').innerHTML=option('','Il mio bilancio','Privato · Solo tu','♙')+(me?.spaces||[]).map(s=>option(s.id,s.name,s.role==='owner'?'Condiviso · Proprietario':s.role==='viewer'?'Condiviso · Lettura':'Condiviso · Membro','⌂')).join('');
 }
-async function selectWorkspace(value){closeWorkspaceMenu();activeSpace=value||'';fundData=null;fundMembers=[];invalidateInsights();if(view==='fund'&&!activeSpace||['insights','accounts'].includes(view)&&activeSpace)navigate('home');renderWorkspacePicker();document.querySelector('[data-view="accounts"]').classList.toggle('hidden',!!activeSpace);state={transactions:[],budgets:{},recurring:[],planned:[]};accountsData=null;favorites=[];costs=null;await reload();if(view==='spaces')await renderSpaces();}
+async function selectWorkspace(value){closeWorkspaceMenu();activeSpace=value||'';movementFilters.category='';movementFilters.account='';$('txFilterCategory').value='';$('txFilterAccount').value='';fundData=null;fundMembers=[];invalidateInsights();if(view==='fund'&&!activeSpace||['insights','accounts'].includes(view)&&activeSpace)navigate('home');renderWorkspacePicker();document.querySelector('[data-view="accounts"]').classList.toggle('hidden',!!activeSpace);state={transactions:[],budgets:{},recurring:[],planned:[]};accountsData=null;favorites=[];costs=null;await reload();if(view==='spaces')await renderSpaces();}
 async function renderSpaces(){if(!me)return;
  $('spaceList').innerHTML=(me.spaces||[]).length?me.spaces.map(s=>`<div class="service"><span><strong>${html(s.name)}</strong><span class="muted"> · ${html(s.role)}</span></span><button class="btn btn-soft space-action" data-space="${html(s.id)}">Apri</button></div>`).join(''):'<div class="empty">Non hai ancora bilanci condivisi.</div>';
  $('inviteList').innerHTML=(me.invites||[]).length?me.invites.map(inv=>`<div class="service"><span><strong>${html(inv.spaceName)}</strong><span class="muted"> · ${html(inv.role)}</span></span><span><button class="btn btn-soft" data-accept="${html(inv.id)}">Accetta</button> <button class="btn btn-soft" data-decline="${html(inv.id)}">Rifiuta</button></span></div>`).join(''):'<div class="empty">Non ci sono inviti in attesa.</div>';
@@ -735,7 +820,7 @@ function bind(){
  $('workspaceOptions').onclick=e=>{const b=e.target.closest('[data-pick-space]');if(b)selectWorkspace(b.dataset.pickSpace);};
  $('manageSpacesShortcut').onclick=()=>{closeWorkspaceMenu();navigate('spaces');};
  document.addEventListener('click',e=>{if(!e.target.closest('#workspacePicker'))closeWorkspaceMenu();});
- document.addEventListener('keydown',e=>{if(e.key==='Escape')closeWorkspaceMenu();});$('prevMonth').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1);render();};$('nextMonth').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1);render();};$('txRepeat').onchange=()=>{$('txRepeatFields').classList.toggle('hidden',!$('txRepeat').checked);};$('txType').onchange=()=>{categories($('txType').value,'txCategory');fillPaymentAccounts('txAccount',$('txAccount').value,$('txType').value);};$('recType').onchange=()=>{categories($('recType').value,'recCategory');fillPaymentAccounts('recAccount',$('recAccount').value,$('recType').value);};$('cancelTx').onclick=$('cancelTxBottom').onclick=()=>$('txDialog').close();$('cancelRec').onclick=$('cancelRecBottom').onclick=()=>$('recDialog').close();
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')closeWorkspaceMenu();});bindMovementFilters();$('prevMonth').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()-1,1);renderMovements();};$('nextMonth').onclick=()=>{month=new Date(month.getFullYear(),month.getMonth()+1,1);renderMovements();};$('txRepeat').onchange=()=>{$('txRepeatFields').classList.toggle('hidden',!$('txRepeat').checked);};$('txType').onchange=()=>{categories($('txType').value,'txCategory');fillPaymentAccounts('txAccount',$('txAccount').value,$('txType').value);};$('recType').onchange=()=>{categories($('recType').value,'recCategory');fillPaymentAccounts('recAccount',$('recAccount').value,$('recType').value);};$('cancelTx').onclick=$('cancelTxBottom').onclick=()=>$('txDialog').close();$('cancelRec').onclick=$('cancelRecBottom').onclick=()=>$('recDialog').close();
  $('txForm').onsubmit=e=>{e.preventDefault();const t={id:editId||'tx-'+crypto.randomUUID(),type:$('txType').value,description:$('txDescription').value.trim(),amount:Number($('txAmount').value),date:$('txDate').value,category:$('txCategory').value,note:$('txNote').value.trim()};if(activeSpace)t.paymentSource=$('txFunding').value;else t.accountId=$('txAccount').value;if(!Number.isFinite(t.amount)||t.amount<=0)return;if(!editId&&$('txRepeat').checked){
   mutateRecurring(async()=>{
    const interval=Number($('txInterval').value),endDate=$('txEnd').value||null;
